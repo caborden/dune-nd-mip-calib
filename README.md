@@ -1,4 +1,11 @@
 # dune-nd-mip-calib
+
+For the new FSD-cube repeated-hit analysis, see
+[the tools and usage guide](docs/FSDCube_analysis_tools.md) and
+[FSDCubeChargeSplitting.ipynb](FSDCubeChargeSplitting.ipynb).
+These provide bounded FLOW scans, pixel-charge plots, and configurable exploratory
+track association. The original scripts described below remain available.
+
 ### Muon Track selection for LArTPC data using DBSCAN + PCA Fits
 ### Track segmentation and charge scale calibration
 If running at NERSC, load corresponding environment as :  
