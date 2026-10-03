@@ -1,0 +1,6 @@
+numpy
+h5py
+h5flow
+scikit-learn
+matplotlib
+plotly
