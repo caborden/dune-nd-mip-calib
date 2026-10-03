@@ -172,7 +172,9 @@ def run(input_file, output_file, is2x2):
                     writer.append_event(i_evt, PromptHits_ev, selected_track_id, projected_xyz, selected_tracks)
             print('Done!')
     finally:
-        f_manager.close()
+        close = getattr(f_manager, "close", None)
+        if callable(close):
+            close()
 
 
 if __name__ == '__main__':
