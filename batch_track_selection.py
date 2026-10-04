@@ -85,7 +85,7 @@ def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None,
     manifest['files'] = records
     manifest['status'] = 'incomplete'
     write_manifest(manifest_path, manifest)
-    for source, output, record in zip(inputs, outputs, records):
+    for file_number, (source, output, record) in enumerate(zip(inputs, outputs, records), start=1):
         partial = output.with_name(output.name + '.partial')
         log = output.with_name(output.name + '.log')
         try:
@@ -120,7 +120,7 @@ def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None,
                     publish(partial, output)
                 record['status'] = 'complete'
             write_manifest(manifest_path, manifest)
-            print(f'Complete: {source.name}', flush=True)
+            print(f'Complete [{file_number}/{len(inputs)}]: {source.name}', flush=True)
         except Exception as exc:
             record['status'] = 'failed'
             record['error'] = str(exc)
