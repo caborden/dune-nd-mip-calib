@@ -3,6 +3,8 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 
 import h5py
@@ -64,6 +66,54 @@ class DqdxTests(unittest.TestCase):
                 analyze(fixture.output,output_dir)
         finally:
             fixture.tearDown()
+
+    def test_mc_only_cli_labels_outputs_and_matches_data_only_numerics(self):
+        fixture = fixtures.OutputTests()
+        fixture.setUp()
+        try:
+            fixture.fixture()
+            selector = fixtures.import_selector()
+            with redirect_stdout(io.StringIO()):
+                selector.run(str(fixture.source),str(fixture.output),False)
+            mc_dir = fixture.root/'mc_only'
+            command = [sys.executable,str(Path(__file__).resolve().parents[1]/'analyze_track_dqdx.py'),
+                       '--mc',str(fixture.output),'--output-dir',str(mc_dir),'--face-cuts','none']
+            completed = subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(completed.returncode,0,completed.stderr)
+            self.assertIn('FSD Simulation Fit',completed.stdout)
+            manifest = json.loads((mc_dir/'analysis.json').read_text())
+            self.assertEqual(manifest['samples'][0]['sample_kind'],'mc')
+            self.assertEqual(manifest['fits'][0]['title'],'FSD Simulation Fit')
+            self.assertEqual(manifest['fits'][0]['sample_id'],1)
+            self.assertTrue((mc_dir/'mc_dqdx.png').exists())
+            self.assertTrue((mc_dir/'mc_dqdx.pdf').exists())
+            self.assertTrue((mc_dir/'mc_dqdx_histogram.csv').exists())
+            self.assertFalse((mc_dir/'data_dqdx.png').exists())
+            self.assertFalse((mc_dir/'data_mc_dqdx.png').exists())
+            data_dir = fixture.root/'data_only'
+            analyze(fixture.output,data_dir,face_cuts='none')
+            with h5py.File(mc_dir/'segments.hdf5') as mc, h5py.File(data_dir/'segments.hdf5') as data:
+                self.assertNotIn('samples/0',mc)
+                self.assertEqual(mc['samples/1'].attrs['sample_kind'],'mc')
+                values = mc['segments/data'][:]
+                self.assertEqual(set(values['sample_id']),{1})
+                np.testing.assert_array_equal(values['dqdx'],data['segments/data']['dqdx'])
+            np.testing.assert_array_equal(np.loadtxt(mc_dir/'mc_dqdx_histogram.csv',delimiter=',',skiprows=1),
+                                          np.loadtxt(data_dir/'data_dqdx_histogram.csv',delimiter=',',skiprows=1))
+        finally:
+            fixture.tearDown()
+
+    def test_no_sample_fails_before_creating_outputs(self):
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root)/'unused'
+            with self.assertRaisesRegex(ValueError,'at least one'):
+                analyze(output_dir=output)
+            command = [sys.executable,str(Path(__file__).resolve().parents[1]/'analyze_track_dqdx.py'),
+                       '--output-dir',str(output)]
+            completed = subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(completed.returncode,2)
+            self.assertIn('at least one of --data or --mc',completed.stderr)
+            self.assertFalse(output.exists())
 
     def test_explicit_geometry_and_source_identity(self):
         fixture = fixtures.OutputTests()

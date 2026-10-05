@@ -178,9 +178,13 @@ def plot_panel(ax, counts, edges, title, fit_range, min_fit_entries):
     return summary
 
 
-def analyze(data, output_dir, mc=None, segment_length_cm=3., step_cm=3.,
+def analyze(data=None, output_dir=None, mc=None, segment_length_cm=3., step_cm=3.,
             grouping='io-group', geometry=None, require_through_going=False, face_cuts='auto',
             face_margin_cm=1., bins=100, hist_range=(0.,90.), fit_range=(20.,50.), min_fit_entries=100):
+    if data is None and mc is None:
+        raise ValueError('Provide at least one of --data or --mc')
+    if output_dir is None:
+        raise ValueError('output_dir is required')
     if face_cuts not in {'auto','none'}:
         raise ValueError('face_cuts must be auto or none')
     if not (np.isfinite([segment_length_cm,step_cm,face_margin_cm,*hist_range,*fit_range]).all()
@@ -199,7 +203,9 @@ def analyze(data, output_dir, mc=None, segment_length_cm=3., step_cm=3.,
                   boundary_policy='upstream inclusive endpoints; exact boundary hits can appear in adjacent windows')
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
-    samples = [('FSD Data Fit',data)] + ([('FSD Simulation Fit',mc)] if mc else [])
+    # Stable identities: data=0, MC=1, including single-sample runs.
+    samples = ([('data','FSD Data Fit',data)] if data is not None else [])
+    samples += ([('mc','FSD Simulation Fit',mc)] if mc is not None else [])
     segment_file = output_dir/'segments.hdf5'
     manifest = dict(status='incomplete',settings=config,samples=[],
                     upstream_commit='33cf2fe926afe416b31fe930f18dff80b9ab47d8',
@@ -213,9 +219,13 @@ def analyze(data, output_dir, mc=None, segment_length_cm=3., step_cm=3.,
             out.attrs['status'] = 'incomplete'
             out.attrs['settings'] = json.dumps(config)
             out.create_dataset('segments/data',shape=(0,),maxshape=(None,),dtype=SEGMENT_DTYPE,chunks=True,compression='gzip')
-            for sample_id, (title,path) in enumerate(samples):
+            for kind,title,path in samples:
+                sample_id = 0 if kind == 'data' else 1
                 audit = segment_sample(path,out,sample_id,config)
-                manifest['samples'].append(dict(title=title,input=str(Path(path).resolve()),audit=audit))
+                out[f'samples/{sample_id}'].attrs['sample_kind'] = kind
+                out[f'samples/{sample_id}'].attrs['title'] = title
+                manifest['samples'].append(dict(sample_id=sample_id,sample_kind=kind,
+                                               title=title,input=str(Path(path).resolve()),audit=audit))
             out.attrs['status'] = 'complete'
         edges = np.linspace(*hist_range,bins+1)
         counts = [np.zeros(bins,dtype=np.int64) for _ in samples]
@@ -225,25 +235,28 @@ def analyze(data, output_dir, mc=None, segment_length_cm=3., step_cm=3.,
             ds = f['segments/data']
             for start in range(0,len(ds),100000):
                 values = ds[start:start+100000]
-                for sample_id in range(len(samples)):
+                for index,(kind,_,_) in enumerate(samples):
+                    sample_id = 0 if kind == 'data' else 1
                     dqdx = values['dqdx'][values['sample_id']==sample_id]
-                    counts[sample_id] += np.histogram(dqdx,bins=edges)[0]
-                    tails[sample_id]['below'] += int((dqdx<edges[0]).sum())
-                    tails[sample_id]['above'] += int((dqdx>edges[-1]).sum())
+                    counts[index] += np.histogram(dqdx,bins=edges)[0]
+                    tails[index]['below'] += int((dqdx<edges[0]).sum())
+                    tails[index]['above'] += int((dqdx>edges[-1]).sum())
         fit_summaries = []
-        for sample_id,(title,_) in enumerate(samples):
+        for index,(kind,title,_) in enumerate(samples):
             fig,ax = plt.subplots(figsize=(8,5))
-            result = plot_panel(ax,counts[sample_id],edges,title,fit_range,min_fit_entries)
-            result['outside_histogram_range'] = tails[sample_id]
+            result = plot_panel(ax,counts[index],edges,title,fit_range,min_fit_entries)
+            result['sample_id'] = 0 if kind == 'data' else 1
+            result['sample_kind'] = kind
+            result['outside_histogram_range'] = tails[index]
             fit_summaries.append(result)
             fig.text(.5,.01,'Fit: upstream Moyal-like approximation × Gaussian convolution',ha='center',fontsize=8)
             fig.tight_layout(rect=(0,.035,1,1))
-            stem = 'data_dqdx' if sample_id==0 else 'mc_dqdx'
+            stem = f'{kind}_dqdx'
             for ext in ['png','pdf']:
                 fig.savefig(output_dir/f'{stem}.{ext}',dpi=180)
             plt.close(fig)
             np.savetxt(output_dir/f'{stem}_histogram.csv',
-                       np.column_stack((edges[:-1],edges[1:],counts[sample_id])),delimiter=',',
+                       np.column_stack((edges[:-1],edges[1:],counts[index])),delimiter=',',
                        header='bin_low,bin_high,count',comments='')
         if len(samples)==2:
             fig,axes = plt.subplots(1,2,figsize=(14,5))
@@ -259,7 +272,7 @@ def analyze(data, output_dir, mc=None, segment_length_cm=3., step_cm=3.,
                 else:
                     text='Fit unavailable'
                 ax.text(.95,.55,text,transform=ax.transAxes,ha='right',bbox=dict(boxstyle='round',facecolor='white',edgecolor='0.4'))
-                ax.set(title=samples[i][0],xlabel='dQ/dx [ke−/cm]',ylabel='Number of track segments',xlim=hist_range)
+                ax.set(title=samples[i][1],xlabel='dQ/dx [ke−/cm]',ylabel='Number of track segments',xlim=hist_range)
                 ax.legend()
             fig.text(.5,.01,'Fit: upstream Moyal-like approximation × Gaussian convolution',ha='center',fontsize=8)
             fig.tight_layout(rect=(0,.035,1,1))
@@ -277,7 +290,7 @@ def analyze(data, output_dir, mc=None, segment_length_cm=3., step_cm=3.,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data',required=True,help='completed merged data track-selection HDF5')
+    parser.add_argument('--data',help='completed merged data track-selection HDF5')
     parser.add_argument('--mc',help='completed merged simulation track-selection HDF5')
     parser.add_argument('--output-dir',required=True,help='new directory for plots/tables')
     parser.add_argument('--segment-length-cm',type=float,default=3.)
@@ -293,6 +306,8 @@ if __name__ == '__main__':
     parser.add_argument('--fit-range',type=float,nargs=2,default=(20.,50.))
     parser.add_argument('--min-fit-entries',type=int,default=100)
     args = vars(parser.parse_args())
+    if args['data'] is None and args['mc'] is None:
+        parser.error('provide at least one of --data or --mc')
     geometry_path = args.pop('geometry_json')
     if geometry_path:
         args['geometry'] = json.loads(Path(geometry_path).read_text())

@@ -4,3 +4,5 @@ h5flow
 scikit-learn
 matplotlib
 plotly
+scipy
+tqdm
