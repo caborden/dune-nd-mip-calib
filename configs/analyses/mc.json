@@ -1,0 +1,32 @@
+{
+  "target": {
+    "kind": "sample",
+    "id": "mc-FSDCubeSim_v1_prc256"
+  },
+  "run_modules": [
+    "dqdx"
+  ],
+  "segments": {
+    "segment_length_cm": 3.0,
+    "step_cm": 3.0,
+    "grouping": "io-group",
+    "face_cuts": "auto",
+    "face_margin_cm": 1.0,
+    "require_through_going": false,
+    "geometry": {}
+  },
+  "modules": {
+    "dqdx": {
+      "bins": 100,
+      "hist_range": [
+        0.0,
+        90.0
+      ],
+      "fit_range": [
+        20.0,
+        50.0
+      ],
+      "min_fit_entries": 100
+    }
+  }
+}

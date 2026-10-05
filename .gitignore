@@ -1,2 +1,5 @@
 __pycache__/
 *.py[cod]
+
+# Local copies of NERSC selections, analysis tables, figures and logs.
+/scratch/

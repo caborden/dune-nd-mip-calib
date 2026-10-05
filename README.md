@@ -2,6 +2,13 @@
 
 Track selection for LArTPC data using DBSCAN and PCA fits.
 
+The recommended analysis workflow uses sample folders for data and MC and
+comparison folders for paired analyses. Selections live under `selection/v1/`;
+each analysis run has shared derived tables and separate module output folders.
+See [the organization and migration guide](docs/analysis-layout.md) for the full
+layout, NERSC migration commands, and the configurable `python -m analysis.run`
+entry point. Existing `analyze_track_dqdx.py` commands still work.
+
 On NERSC, load the existing analysis environment:
 
 ```bash
