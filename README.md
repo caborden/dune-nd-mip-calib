@@ -8,6 +8,8 @@ each analysis run has shared derived tables and separate module output folders.
 See [the organization and migration guide](docs/analysis-layout.md) for the full
 layout, NERSC migration commands, and the configurable `python -m analysis.run`
 entry point. Existing `analyze_track_dqdx.py` commands still work.
+The `hit_density` module adds mean hits per segment versus drift time and a
+data/MC ratio, with configurable bins and whole-track bootstrap uncertainties.
 
 On NERSC, load the existing analysis environment:
 

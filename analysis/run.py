@@ -8,6 +8,8 @@ import h5py
 
 from .config import make_settings, SEGMENT_KEYS
 from .dqdx import plot_segments
+from .hit_density import (plot_segments as plot_hit_density, make_settings as make_hit_density_settings,
+                          SETTING_KEYS as HIT_DENSITY_KEYS)
 from .segments import build_segments
 from .io import (read_json, write_json, fingerprint, file_identity, code_hashes,
                  runtime_versions, safe_name)
@@ -18,6 +20,8 @@ MODULES = {
                      settings=SEGMENT_KEYS, output='shared/segments.hdf5'),
     'dqdx': dict(dependencies=['segments'], code=['analysis/dqdx.py', 'pixel_dqdx/dqdx.py'],
                  settings={'bins', 'hist_range', 'fit_range', 'min_fit_entries'}, output='dqdx'),
+    'hit_density': dict(dependencies=['segments'], code=['analysis/hit_density.py'],
+                        settings=HIT_DENSITY_KEYS, output='hit_density'),
 }
 
 
@@ -90,12 +94,19 @@ def run(config_path, root, run_id, modules=None, resume=False):
         if name not in MODULES or not set(options) <= MODULES[name]['settings']:
             raise ValueError(f'Unknown module/options: {name}')
     settings = make_settings(**segment_settings, **module_settings.get('dqdx', {}))
+    density_settings = make_hit_density_settings(**module_settings.get('hit_density', {}))
+    stage_settings = {
+        'segments': {key: settings[key] for key in SEGMENT_KEYS},
+        'dqdx': {key: settings[key] for key in MODULES['dqdx']['settings']},
+        'hit_density': density_settings,
+    }
     requested = modules if modules is not None else config.get('run_modules', ['dqdx'])
     if requested == ['all']:
         requested = list(MODULES)
     order = dependency_order(requested)
     inputs = {kind: file_identity(path) for kind, _, path in samples}
-    resolved = dict(target=config['target'], inputs=inputs, settings=settings)
+    resolved = dict(target=config['target'], inputs=inputs, settings=settings,
+                    module_settings={'hit_density': density_settings})
     directory = target_dir/'analysis'/safe_name(run_id)
     manifest_path = directory/'manifest.json'
     if directory.exists() and not resume:
@@ -121,7 +132,7 @@ def run(config_path, root, run_id, modules=None, resume=False):
         for name in order:
             module = MODULES[name]
             signatures[name] = fingerprint(dict(inputs=inputs, runtime=runtime,
-                settings={key: settings[key] for key in module['settings']},
+                settings=stage_settings[name],
                 code=code_hashes(module['code'] + ['analysis/config.py', 'analysis/io.py', 'analysis/run.py']),
                 dependencies={dep: signatures[dep] for dep in module['dependencies']}))
             prior = manifest['stages'].get(name, {})
@@ -158,8 +169,11 @@ def run(config_path, root, run_id, modules=None, resume=False):
                     destination.parent.mkdir(exist_ok=True)
                     (temporary/'segments.hdf5').rename(destination)
                     temporary.rmdir()
-                else:
+                elif name == 'dqdx':
                     plot_segments(directory/'shared/segments.hdf5', temporary, settings)
+                    temporary.rename(destination)
+                elif name == 'hit_density':
+                    plot_hit_density(directory/'shared/segments.hdf5', temporary, density_settings)
                     temporary.rename(destination)
                 # Input files must remain unchanged during extraction/plotting.
                 if inputs != {kind: file_identity(path) for kind, _, path in samples}:

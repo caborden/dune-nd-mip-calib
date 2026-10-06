@@ -111,6 +111,8 @@ class LayoutTests(unittest.TestCase):
             run(self.config, self.base, 'run-002', modules=['all'], resume=True)
         self.assertEqual(shared.stat().st_mtime_ns, before)
         self.assertTrue((directory/'dqdx/data_mc_dqdx.pdf').exists())
+        self.assertTrue((directory/'hit_density/data_mc_hit_density.png').exists())
+        self.assertEqual(read_json(directory/'manifest.json')['stages']['hit_density']['status'], 'complete')
         legacy = self.base/'dqdx_data_mc_v1'
         with h5py.File(shared) as new, h5py.File(legacy/'segments.hdf5') as old:
             np.testing.assert_array_equal(new['segments/data'][:], old['segments/data'][:])
@@ -155,6 +157,10 @@ class LayoutTests(unittest.TestCase):
             directory = run(self.config, self.base, 'run-002')
         self.assertTrue((directory/'dqdx/mc_dqdx.png').exists())
         self.assertFalse((directory/'dqdx/data_dqdx.png').exists())
+        with redirect_stdout(io.StringIO()):
+            density_dir = run(self.config, self.base, 'density-only', modules=['hit_density'])
+        self.assertTrue((density_dir/'hit_density/mc_hit_density.png').exists())
+        self.assertFalse((density_dir/'dqdx').exists())
         with self.assertRaises(FileExistsError):
             run(self.config, self.base, 'run-002')
         (directory/'dqdx/mc_dqdx.png').unlink()

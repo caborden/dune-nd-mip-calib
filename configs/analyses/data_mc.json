@@ -4,7 +4,8 @@
     "id": "reflow-v3-feb2026_vs_fsdcube-sim-v1-prc256"
   },
   "run_modules": [
-    "dqdx"
+    "dqdx",
+    "hit_density"
   ],
   "segments": {
     "segment_length_cm": 3.0,
@@ -27,6 +28,18 @@
         50.0
       ],
       "min_fit_entries": 100
+    },
+    "hit_density": {
+      "drift_bins": 9,
+      "drift_range_ticks": [
+        0.0,
+        5000.0
+      ],
+      "observable": "hits-per-segment",
+      "uncertainty": "track-bootstrap",
+      "bootstrap_samples": 1000,
+      "bootstrap_seed": 12345,
+      "min_segments": 1
     }
   }
 }
