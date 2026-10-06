@@ -10,6 +10,9 @@ layout, NERSC migration commands, and the configurable `python -m analysis.run`
 entry point. Existing `analyze_track_dqdx.py` commands still work.
 The `hit_density` module adds mean hits per segment versus drift time and a
 data/MC ratio, with configurable bins and whole-track bootstrap uncertainties.
+Existing runs support `--resume` to add modules and `--rerun dqdx` (or other
+module names) to refresh products in place, retaining previous outputs in
+`.history/`. Imported runs can be adopted after input/settings validation.
 
 On NERSC, load the existing analysis environment:
 

@@ -38,8 +38,10 @@ class LayoutTests(unittest.TestCase):
                 shutil.copy2(self.fixture.output, directory/part/'one.hdf5')
                 write_json(directory/part/'batch_manifest.json', dict(status='complete', inputs=[{}],
                     files=[dict(output='/historical/path/one.hdf5', status='complete')]))
-        analyze(self.fixture.output, self.base/'dqdx_data_v1', face_cuts='none')
-        analyze(self.fixture.output, self.base/'dqdx_data_mc_v1', mc=self.fixture.output, face_cuts='none')
+        data_source = self.root/'fsdcube-charge-splitting'/SPECS[0][2]/SPECS[0][3]
+        mc_source = self.root/'fsdcube-charge-splitting'/SPECS[1][2]/SPECS[1][3]
+        analyze(data_source, self.base/'dqdx_data_v1', face_cuts='none')
+        analyze(data_source, self.base/'dqdx_data_mc_v1', mc=mc_source, face_cuts='none')
         archive = self.root/'fsdcube-charge-splitting/FSDCubeSim_v1_prc256-20261003-191727'
         archive.mkdir()
         (archive/'inputs.txt').write_text('old list\n')
@@ -123,7 +125,7 @@ class LayoutTests(unittest.TestCase):
         config = read_json(self.config)
         config['segments']['segment_length_cm'] = 4
         write_json(self.config, config)
-        with self.assertRaisesRegex(ValueError, 'new run ID'):
+        with self.assertRaisesRegex(ValueError, '--rerun segments'):
             run(self.config, self.base, 'run-002', resume=True)
         self.assertEqual((directory/'manifest.json').read_bytes(), manifest)
 
@@ -167,5 +169,97 @@ class LayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing'):
             run(self.config, self.base, 'run-002', resume=True)
         write_json(self.config, dict(target=dict(kind='sample', id=DATA_ID)))
-        with self.assertRaisesRegex(ValueError, 'historical'):
+        with self.assertRaisesRegex(ValueError, '--rerun segments'):
             run(self.config, self.base, 'run-001', resume=True)
+
+    def test_imported_run_refresh_titles_preserves_table_and_history(self):
+        # Old imported tables did not always store sample_kind, and have old titles.
+        with h5py.File(self.base/'dqdx_data_mc_v1/segments.hdf5', 'r+') as f:
+            for identity in f['samples']:
+                f[f'samples/{identity}'].attrs['title'] = 'FSD old title'
+                del f[f'samples/{identity}'].attrs['sample_kind']
+        self.migrate()
+        directory = self.base/'comparisons'/COMPARISON_ID/'analysis/run-001'
+        before = (directory/'shared/segments.hdf5').stat().st_mtime_ns
+        original = (directory/'dqdx/data_mc_dqdx.png').read_bytes()
+        with redirect_stdout(io.StringIO()):
+            run(self.config, self.base, 'run-001', modules=['dqdx'], rerun=['dqdx'])
+        self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, before)
+        titles = [s['title'] for s in read_json(directory/'dqdx/analysis.json')['samples']]
+        self.assertEqual(titles, ['FSD Cube Data Fit', 'FSD Cube Simulation Fit'])
+        saved = next(directory.glob('.history/*/dqdx/data_mc_dqdx.png'))
+        self.assertEqual(saved.read_bytes(), original)
+        self.assertTrue((directory/'dqdx/segments.hdf5').exists())
+        self.assertTrue((saved.parent/'segments.hdf5').exists())
+        with redirect_stdout(io.StringIO()):
+            check(self.root)  # Original hashes are verified against preserved history.
+            run(self.config, self.base, 'run-001', modules=['hit_density'], resume=True)
+        self.assertTrue((directory/'hit_density/data_mc_hit_density.png').exists())
+        self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, before)
+
+    def test_failed_refresh_leaves_old_outputs_then_plot_settings_can_change(self):
+        self.migrate()
+        with redirect_stdout(io.StringIO()):
+            directory = run(self.config, self.base, 'update', modules=['all'])
+        shared_time = (directory/'shared/segments.hdf5').stat().st_mtime_ns
+        density_time = (directory/'hit_density/data_mc_hit_density.png').stat().st_mtime_ns
+        old = (directory/'dqdx/data_dqdx.png').read_bytes()
+        with patch('analysis.run.plot_segments', side_effect=RuntimeError('refresh failure')):
+            with redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+                run(self.config, self.base, 'update', modules=['dqdx'], rerun=['dqdx'])
+        self.assertEqual((directory/'dqdx/data_dqdx.png').read_bytes(), old)
+        self.assertEqual(read_json(directory/'manifest.json')['stages']['dqdx']['status'], 'complete')
+        config = read_json(self.config)
+        config['modules'] = {'dqdx': {'bins': 60}}
+        write_json(self.config, config)
+        with redirect_stdout(io.StringIO()):
+            run(self.config, self.base, 'update', modules=['dqdx'], rerun=['dqdx'])
+        self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, shared_time)
+        self.assertEqual((directory/'hit_density/data_mc_hit_density.png').stat().st_mtime_ns, density_time)
+        self.assertEqual(read_json(directory/'dqdx/analysis.json')['settings']['bins'], 60)
+
+    def test_regenerated_segments_invalidate_and_refresh_dependents(self):
+        self.migrate()
+        with redirect_stdout(io.StringIO()):
+            directory = run(self.config, self.base, 'update', modules=['all'])
+        old = read_json(directory/'manifest.json')['stages']['segments']['generation']
+        config = read_json(self.config)
+        config['segments']['segment_length_cm'] = 4
+        write_json(self.config, config)
+        with redirect_stdout(io.StringIO()):
+            run(self.config, self.base, 'update', modules=['segments'], rerun=['segments'])
+        state = read_json(directory/'manifest.json')
+        self.assertNotEqual(state['stages']['segments']['generation'], old)
+        self.assertEqual(state['stages']['dqdx']['status'], 'stale')
+        self.assertEqual(state['stages']['hit_density']['status'], 'stale')
+        self.assertTrue(next(directory.glob('.history/*/shared/segments.hdf5')).exists())
+        with redirect_stdout(io.StringIO()):
+            run(self.config, self.base, 'update', modules=['all'], resume=True)
+        state = read_json(directory/'manifest.json')
+        self.assertTrue(all(stage['status'] == 'complete' for stage in state['stages'].values()))
+
+    def test_old_modular_fingerprints_allow_runner_updates_without_extraction(self):
+        from analysis.io import fingerprint
+        from analysis.run import MODULES
+        self.migrate()
+        with redirect_stdout(io.StringIO()):
+            directory = run(self.config, self.base, 'old-run', modules=['dqdx'])
+        manifest = read_json(directory/'manifest.json')
+        manifest.pop('state_version')
+        manifest['source_hashes']['analysis/run.py'] = 'historical-runner-hash'
+        for name in ['segments', 'dqdx']:
+            stage = manifest['stages'][name]
+            stage.pop('generation')
+            stage.pop('signature_components')
+            spec = MODULES[name]
+            prior = dict(inputs=manifest['resolved']['inputs'], runtime=manifest['runtime'],
+                settings={key: manifest['resolved']['settings'][key] for key in spec['settings']},
+                code={key: manifest['source_hashes'][key] for key in spec['code'] +
+                      ['analysis/config.py', 'analysis/io.py', 'analysis/run.py']},
+                dependencies={dep: manifest['stages'][dep]['signature'] for dep in spec['dependencies']})
+            stage['signature'] = fingerprint(prior)
+        write_json(directory/'manifest.json', manifest)
+        before = (directory/'shared/segments.hdf5').stat().st_mtime_ns
+        with redirect_stdout(io.StringIO()):
+            run(self.config, self.base, 'old-run', modules=['hit_density'], resume=True)
+        self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, before)

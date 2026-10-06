@@ -68,7 +68,7 @@ def origin(path, previous):
     return path
 
 
-def preflight(root, base, moves):
+def preflight(root, base, moves, validate_analyses=True):
     for index, (source, destination) in enumerate(moves):
         if source.is_symlink():
             if source.resolve() != destination.resolve() or not destination.exists():
@@ -96,6 +96,8 @@ def preflight(root, base, moves):
         complete_selection(pilot_path)
     for old, target in [('dqdx_data_v1', base/'samples'/DATA_ID),
                         ('dqdx_data_mc_v1', base/'comparisons'/COMPARISON_ID)]:
+        if not validate_analyses:
+            continue
         current = base/old if (base/old).exists() else target/'analysis/run-001/dqdx'
         record = read_json(current/'analysis.json')
         if record['status'] != 'complete':
@@ -144,21 +146,31 @@ def import_analysis(directory):
                stages={'segments': {'status': 'complete', 'path': 'shared/segments.hdf5'},
                        'dqdx': {'status': 'complete', 'path': 'dqdx/analysis.json'}},
                source_hashes=record.get('source_hashes', {}),
-               note='Original provenance is retained verbatim. New analyses use a new run ID.'))
+               note='Original provenance is retained verbatim. The runner can adopt and refresh this run.'))
 
 
 def check(root):
     base, moves = layout(root)
-    preflight(root, base, moves)
+    preflight(root, base, moves, validate_analyses=False)
     record = read_json(base/'relocation.json')
     if record['status'] != 'complete':
         raise ValueError('Migration has not completed; rerun --apply')
     for source, destination in moves:
         if not source.is_symlink() or source.resolve() != destination.resolve():
             raise ValueError(f'Missing/wrong compatibility link: {source}')
+    histories = []
+    for group in ['samples', 'comparisons']:
+        for path in (base/group).glob('*/analysis/*/.history/*/history.json'):
+            histories.extend(read_json(path).get('previous_outputs', []))
     for old, expected in record['preserved_files'].items():
         path = root/old
-        if not path.exists() or digest(path) != expected:
+        canonical = path.resolve()
+        candidates = [path]
+        for history in histories:
+            source = Path(history['source'])
+            if canonical.is_relative_to(source):
+                candidates.append(Path(history['destination'])/canonical.relative_to(source))
+        if not any(candidate.is_file() and digest(candidate) == expected for candidate in candidates):
             raise ValueError(f'Historical bytes changed or are missing: {path}')
     for path, expected in registries(base).items():
         if read_json(path) != expected:
@@ -172,13 +184,14 @@ def check(root):
 def migrate(root, apply=False):
     root = Path(root).resolve()
     base, moves = layout(root)
-    preflight(root, base, moves)
+    record_path = base/'relocation.json'
+    completed = record_path.exists() and read_json(record_path).get('status') == 'complete'
+    preflight(root, base, moves, validate_analyses=not completed)
     for source, destination in moves:
         print(f'{source.relative_to(root)} -> {destination.relative_to(root)}')
     if not apply:
         print('Dry run: no files changed. Use --apply to move and leave compatibility links.')
         return
-    record_path = base/'relocation.json'
     if record_path.exists():
         record = read_json(record_path)
         if record['status'] == 'complete':

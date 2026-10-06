@@ -102,14 +102,17 @@ python -m analysis.run --config configs/analyses/data_mc.json \
   --root "$SCRATCH/fsdcube" --run-id run-003 --modules dqdx --resume
 ```
 
-A run refuses overwriting existing results. `--resume` checks canonical input
+A run refuses implicit overwriting of existing results. `--resume` checks canonical input
 paths, file sizes/mtimes, relevant settings, source-code hashes, dependency
 signatures, package/Python versions, and output paths/sizes/mtimes. Inputs are
 assumed immutable; this analysis check does not hash every large input file.
-Completed stages are reused only on an exact match. Use a new run ID when
-inputs/settings/code change or outputs are modified. A failed stage keeps its
-diagnostic staging directory and can be retried while retaining completed
-dependencies. A killed process can leave `.writer.lock`; confirm no process is
+Completed stages are reused only on a compatible scientific match. Changes to
+runner/manifest code alone do not invalidate extraction or plotting artifacts.
+Change a plotting module's code/settings with `--rerun <module>` to refresh it
+in the same run, or choose a new run ID. Changed inputs or segmentation require
+`--rerun segments`; downstream stages are then marked stale and recomputed when
+requested. A failed computation keeps the previous output at its original path
+and retains diagnostics under `.history/`. A killed process can leave `.writer.lock`; confirm no process is
 still using that run before removing that lock. Interrupted publication with an
 unrecorded destination is refused for manual inspection.
 
@@ -117,6 +120,51 @@ unrecorded destination is refused for manual inspection.
 the requested stages and their dependencies, not every future module. A fit
 marked unavailable remains a valid completed plotting stage; consult the
 module's `analysis.json` for fit success and diagnostics.
+
+### Update or extend an existing run
+
+The dQ/dx titles are **FSD Cube Data Fit** and **FSD Cube Simulation Fit**, including
+when plots are regenerated from an older table whose title attributes say FSD.
+From the repository directory after pulling updated code on NERSC:
+
+```bash
+# Refresh only the dQ/dx plots/fits in the existing paired run-001.
+python -m analysis.run --config configs/analyses/data_mc.json \
+  --root "$SCRATCH/fsdcube" --run-id run-001 --modules dqdx --rerun dqdx
+
+# Add hit-density products to that same run, reusing compatible shared segments.
+python -m analysis.run --config configs/analyses/data_mc.json \
+  --root "$SCRATCH/fsdcube" --run-id run-001 --modules hit_density --resume
+
+# Explicitly rebuild extraction and all implemented plotting modules.
+python -m analysis.run --config configs/analyses/data_mc.json \
+  --root "$SCRATCH/fsdcube" --run-id run-001 --modules all --rerun all
+```
+
+Use `data.json` or `mc.json` for a sample-only run. `--rerun` implies `--resume`,
+and rerun names are added to the requested modules. Multiple names are supported,
+e.g. `--rerun dqdx hit_density`. A forced dependency rebuild also reruns any
+requested dependent modules; unrequested dependent outputs remain on disk but
+their manifest status becomes `stale` until refreshed. Consult the per-stage
+status when consuming an existing output directory.
+
+Each invocation snapshots the previous configuration and manifest under
+`.history/<UTC timestamp>-<id>/`. A successful replacement moves the old module
+directory or shared table there, then publishes the completed staged replacement.
+No previous output is removed before its replacement has been computed. History
+grows with refreshes, especially when rebuilding shared HDF5 tables. Archived
+compatibility links continue to point to the appropriate saved/current table.
+
+Imported `run-001` results are automatically adopted. Reuse requires a complete
+table with matching segmentation options, sample identities, input canonical
+paths/sizes/mtimes and upstream segmentation hash. If those checks fail (for
+example, when analyzing a local copy with different input paths/timestamps), the
+error requests `--rerun segments`. Run the first example with
+`--rerun segments dqdx` to rebuild those dependencies while retaining all
+previous outputs in history. Original imported provenance is preserved in the
+history and adopted manifest; saved HDF5 attributes are not relabeled in place.
+Older modular signatures are upgraded only if their recorded provenance can be
+reconstructed exactly; otherwise the runner requests an explicit rerun.
 
 ## Hits per segment versus drift time
 
@@ -155,10 +203,9 @@ python -m analysis.run --config configs/analyses/data_mc.json \
 ```
 
 Use `data.json` or `mc.json` for a single sample; use `--modules all` to produce
-both dQ/dx and hit-density outputs from one shared extraction. Adding this module
-changes the runner code fingerprint, so choose a new run ID when updating older
-runs. Existing output directories remain intact. Once created with the current
-code, the same run supports `--resume` to add the other plotting module.
+both dQ/dx and hit-density outputs from one shared extraction. `--resume` can add
+this module to an existing compatible run; `--rerun hit_density` refreshes its
+existing products without forcing segment extraction.
 
 Options belong in `modules.hit_density`:
 
@@ -254,8 +301,11 @@ Old directories become relative compatibility symlinks. Old `full_parts`,
 `pilot_parts`, pilot-file and analysis `segments.hdf5` paths also remain
 accessible through links. Keep these links while using older notebooks or
 historic manifests. Their original paths, timestamps, hashes, and HDF5 metadata
-are preserved verbatim; imported analyses are labeled `imported-analysis-v1`
-and require a **new** run ID for the modular runner.
+are preserved verbatim; imported analyses are initially labeled
+`imported-analysis-v1` and can be adopted by the runner as described above.
+After intentional refreshes, `reorganize_outputs.py --check` verifies the original
+file hashes against either their current paths or preserved `.history/` copies.
+It verifies migration preservation, not the freshness of every current analysis.
 
 The batch/merge resume code compares canonical paths. Compatibility links keep
 old paths readable but do not make those old canonical-path signatures match

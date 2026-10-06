@@ -7,10 +7,11 @@ import uuid
 import h5py
 
 from .config import make_settings, SEGMENT_KEYS
-from .dqdx import plot_segments
+from .dqdx import plot_segments, sample_title
 from .hit_density import (plot_segments as plot_hit_density, make_settings as make_hit_density_settings,
                           SETTING_KEYS as HIT_DENSITY_KEYS)
 from .segments import build_segments
+from .run_state import components, upgrade_legacy, adopt_imported, start_history, publish
 from .io import (read_json, write_json, fingerprint, file_identity, code_hashes,
                  runtime_versions, safe_name)
 
@@ -51,7 +52,7 @@ def resolve_target(root, target):
         with h5py.File(path, 'r') as source:
             if source.attrs.get('status') != 'complete' or source.attrs.get('schema_version') != '2.0':
                 raise ValueError(f'Expected complete schema-2 selection: {path}')
-        title = 'FSD Data Fit' if sample_kind == 'data' else 'FSD Simulation Fit'
+        title = sample_title(sample_kind)
         samples.append((sample_kind, title, path))
     return directory, samples
 
@@ -77,7 +78,7 @@ def artifact_identities(path):
     return [file_identity(p) for p in files]
 
 
-def run(config_path, root, run_id, modules=None, resume=False):
+def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
     config = read_json(config_path)
     unexpected = set(config) - {'target', 'segments', 'modules', 'run_modules'}
     if unexpected:
@@ -103,7 +104,11 @@ def run(config_path, root, run_id, modules=None, resume=False):
     requested = modules if modules is not None else config.get('run_modules', ['dqdx'])
     if requested == ['all']:
         requested = list(MODULES)
+    forced = set(MODULES) if rerun == ['all'] else set(rerun or [])
+    dependency_order(list(forced)) if forced else None
+    requested = list(dict.fromkeys([*requested, *sorted(forced)]))
     order = dependency_order(requested)
+    resume = resume or bool(forced)
     inputs = {kind: file_identity(path) for kind, _, path in samples}
     resolved = dict(target=config['target'], inputs=inputs, settings=settings,
                     module_settings={'hit_density': density_settings})
@@ -117,46 +122,56 @@ def run(config_path, root, run_id, modules=None, resume=False):
     with lock.open('x') as handle:
         handle.write(str(__import__('os').getpid()))
     try:
+        runtime = runtime_versions()
         if manifest_path.exists():
-            manifest = read_json(manifest_path)
-            if manifest.get('format') != 'modular-analysis-v1':
-                raise ValueError('Imported historical run: choose a new run ID')
-            if manifest['resolved']['inputs'] != inputs or manifest['resolved']['target'] != config['target']:
-                raise ValueError('Run inputs/target changed: choose a new run ID')
+            original = read_json(manifest_path)
+            if original.get('format') == 'imported-analysis-v1':
+                manifest = adopt_imported(directory, original, resolved, runtime, stage_settings,
+                                          MODULES, 'segments' in forced)
+            elif original.get('format') == 'modular-analysis-v1':
+                manifest = upgrade_legacy(original, MODULES)
+                if (manifest['resolved']['inputs'] != inputs or
+                        manifest['resolved']['target'] != config['target']) and 'segments' not in forced:
+                    raise ValueError('Run inputs/target changed: choose a new run ID or use --rerun segments')
+            else:
+                raise ValueError('Unsupported run manifest')
         else:
             manifest = dict(format='modular-analysis-v1', stages={},
                             created_utc=datetime.now(timezone.utc).isoformat(), resolved=resolved)
-        runtime = runtime_versions()
-        signatures = {}
-        # Reject stale completed stages before changing any historical run record.
+        plans = {}
+        # Complete preflight before changing any output or run record.
         for name in order:
             module = MODULES[name]
-            signatures[name] = fingerprint(dict(inputs=inputs, runtime=runtime,
-                settings=stage_settings[name],
-                code=code_hashes(module['code'] + ['analysis/config.py', 'analysis/io.py', 'analysis/run.py']),
-                dependencies={dep: signatures[dep] for dep in module['dependencies']}))
             prior = manifest['stages'].get(name, {})
-            if prior.get('status') == 'complete':
-                if prior['signature'] != signatures[name]:
-                    raise ValueError(f'{name} settings/code changed: choose a new run ID')
-                if prior['artifacts'] != artifact_identities(directory/module['output']):
-                    raise ValueError(f'{name} outputs changed or are missing: choose a new run ID')
-        manifest.update(status='running', requested_modules=requested, resolved=resolved,
+            scientific = components(name, MODULES, inputs, runtime, stage_settings[name], plans)
+            dep_changed = any(plans[dep]['execute'] for dep in module['dependencies'])
+            execute = name in forced or dep_changed or prior.get('status') in {'stale', 'failed', 'running'} or not prior
+            destination = directory/module['output']
+            if not execute:
+                if prior.get('status') != 'complete' or prior.get('signature_components') != scientific:
+                    raise ValueError(f'{name} settings/code changed or unverified: use --rerun {name}')
+                if prior.get('artifacts') != artifact_identities(destination):
+                    raise ValueError(f'{name} outputs changed or are missing: use --rerun {name}')
+            if not prior and destination.exists():
+                raise FileExistsError(f'Unrecorded output requires inspection: {destination}')
+            plans[name] = dict(signature_components=scientific, signature=fingerprint(scientific),
+                               generation=uuid.uuid4().hex if execute else prior['generation'],
+                               execute=execute, prior=prior)
+        history, history_record = start_history(directory)
+        manifest.update(status='running', state_version=2, requested_modules=requested, resolved=resolved,
                         runtime=runtime, source_hashes=code_hashes())
         write_json(directory/'config.json', config)
         write_json(manifest_path, manifest)
         started = True
         for name in order:
             module = MODULES[name]
-            signature = signatures[name]
-            prior = manifest['stages'].get(name, {})
+            plan = plans[name]
             destination = directory/module['output']
-            if prior.get('status') == 'complete':
+            if not plan['execute']:
                 print(f'Reuse {name}: {destination}', flush=True)
                 continue
-            if destination.exists():
-                raise FileExistsError(f'Unrecorded output requires inspection: {destination}')
-            stage = dict(status='running', signature=signature)
+            stage = {key: plan[key] for key in ['signature_components', 'signature', 'generation']}
+            stage['status'] = 'running'
             manifest['stages'][name] = stage
             write_json(manifest_path, manifest)
             temporary = directory/f'.{name}-{uuid.uuid4().hex}.tmp'
@@ -164,39 +179,58 @@ def run(config_path, root, run_id, modules=None, resume=False):
             print(f'Run {name}: {destination}', flush=True)
             try:
                 if name == 'segments':
-                    build_segments(samples, temporary/'segments.hdf5',
-                                   {key: settings[key] for key in SEGMENT_KEYS})
-                    destination.parent.mkdir(exist_ok=True)
-                    (temporary/'segments.hdf5').rename(destination)
-                    temporary.rmdir()
+                    build_segments(samples, temporary/'segments.hdf5', stage_settings['segments'])
+                    ready = temporary/'segments.hdf5'
                 elif name == 'dqdx':
                     plot_segments(directory/'shared/segments.hdf5', temporary, settings)
-                    temporary.rename(destination)
+                    ready = temporary
+                    # Preserve the old flat-layout segments path when refreshing imported plots.
+                    if (destination/'segments.hdf5').is_symlink():
+                        (temporary/'segments.hdf5').symlink_to('../shared/segments.hdf5')
                 elif name == 'hit_density':
                     plot_hit_density(directory/'shared/segments.hdf5', temporary, density_settings)
-                    temporary.rename(destination)
-                # Input files must remain unchanged during extraction/plotting.
+                    ready = temporary
                 if inputs != {kind: file_identity(path) for kind, _, path in samples}:
                     raise ValueError('Input changed during the run')
+                publish(directory, destination, ready, history, history_record)
+                if temporary.exists():
+                    temporary.rmdir()
                 stage.update(status='complete', artifacts=artifact_identities(destination))
+                # Refreshing a dependency invalidates every downstream stage, even if settings match.
+                invalid = {name}
+                for _ in MODULES:
+                    for other, spec in MODULES.items():
+                        if other != name and invalid.intersection(spec['dependencies']):
+                            invalid.add(other)
+                for other in invalid - {name}:
+                    if other in manifest['stages']:
+                        manifest['stages'][other].update(status='stale', reason=f'{name} was regenerated')
                 write_json(manifest_path, manifest)
             except Exception as exc:
-                stage.update(status='failed', error=str(exc))
-                # Keep failed artifacts for inspection; retry uses a fresh staging directory.
-                if destination.exists():
-                    destination.rename(directory/f'.{name}-{uuid.uuid4().hex}.failed')
+                # A computation failure leaves the old output in its original location.
+                if plan['prior'] and destination.exists():
+                    manifest['stages'][name] = dict(plan['prior'], last_attempt_error=str(exc))
+                else:
+                    stage.update(status='failed', error=str(exc))
                 if temporary.exists():
-                    temporary.rename(temporary.with_suffix('.failed'))
+                    failed = history/'failed'/name
+                    failed.parent.mkdir(parents=True, exist_ok=True)
+                    temporary.rename(failed)
                 raise
         manifest.update(status='complete', completed_utc=datetime.now(timezone.utc).isoformat())
         manifest.pop('error', None)
+        history_record.update(status='complete', requested_modules=requested, rerun_modules=sorted(forced))
+        write_json(history/'history.json', history_record)
         write_json(manifest_path, manifest)
         return directory
     except Exception as exc:
         if locals().get('started'):
             manifest.update(status='failed', error=str(exc))
             write_json(manifest_path, manifest)
+            history_record.update(status='failed', error=str(exc))
+            write_json(history/'history.json', history_record)
         raise
+
     finally:
         lock.unlink()
 
@@ -207,7 +241,9 @@ def main():
     parser.add_argument('--root', required=True, help='fsdcube root containing samples/ and comparisons/')
     parser.add_argument('--run-id', required=True, help='e.g. run-002; existing outputs require --resume')
     parser.add_argument('--modules', nargs='+', choices=[*MODULES, 'all'])
-    parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--resume', action='store_true', help='reuse completed stages and add missing modules')
+    parser.add_argument('--rerun', nargs='+', choices=[*MODULES, 'all'],
+                        help='refresh selected stages in this run; implies --resume; old outputs go to .history/')
     args = vars(parser.parse_args())
     args['config_path'] = args.pop('config')
     print(f'Complete: {run(**args)}')

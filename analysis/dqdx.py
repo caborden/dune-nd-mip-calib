@@ -20,6 +20,10 @@ from .io import code_hashes
 from pixel_dqdx.dqdx import fit_histogram, langau
 
 
+def sample_title(kind):
+    return 'FSD Cube Data Fit' if kind == 'data' else 'FSD Cube Simulation Fit'
+
+
 def fit_counts(counts, edges, fit_range, min_fit_entries):
     centers = .5*(edges[:-1]+edges[1:])
     mask = (centers > fit_range[0]) & (centers < fit_range[1])
@@ -65,7 +69,8 @@ def plot_segments(segment_file, output_dir, config):
             raise ValueError('Shared segments are incomplete')
         for sample_id in sorted(f['samples'], key=int):
             attrs = f[f'samples/{sample_id}'].attrs
-            kind, title = attrs['sample_kind'], attrs['title']
+            kind = attrs.get('sample_kind', 'data' if int(sample_id) == 0 else 'mc')
+            title = sample_title(kind)
             samples.append((kind, title, attrs['input_file']))
             records.append(dict(sample_id=int(sample_id), sample_kind=kind, title=title,
                                 input=attrs['input_file'], audit=json.loads(attrs['audit'])))
@@ -146,8 +151,8 @@ def analyze(data=None, output_dir=None, mc=None, **settings):
     config = make_settings(**settings)
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
-    samples = ([('data', 'FSD Data Fit', data)] if data is not None else [])
-    samples += ([('mc', 'FSD Simulation Fit', mc)] if mc is not None else [])
+    samples = ([('data', 'FSD Cube Data Fit', data)] if data is not None else [])
+    samples += ([('mc', 'FSD Cube Simulation Fit', mc)] if mc is not None else [])
     try:
         build_segments(samples, output_dir/'segments.hdf5', config)
         return plot_segments(output_dir/'segments.hdf5', output_dir, config)

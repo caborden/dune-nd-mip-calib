@@ -34,7 +34,7 @@ def file_identity(path):
 def code_hashes(names=None):
     if names is None:
         names = ['analysis/config.py', 'analysis/io.py', 'analysis/segments.py',
-                 'analysis/dqdx.py', 'analysis/hit_density.py', 'analysis/run.py',
+                 'analysis/dqdx.py', 'analysis/hit_density.py', 'analysis/run.py', 'analysis/run_state.py',
                  'pixel_dqdx/segments.py', 'pixel_dqdx/dqdx.py']
     return {name: hashlib.sha256((REPO/name).read_bytes()).hexdigest() for name in names}
 

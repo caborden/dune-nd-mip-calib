@@ -80,10 +80,10 @@ class DqdxTests(unittest.TestCase):
                        '--mc',str(fixture.output),'--output-dir',str(mc_dir),'--face-cuts','none']
             completed = subprocess.run(command,capture_output=True,text=True)
             self.assertEqual(completed.returncode,0,completed.stderr)
-            self.assertIn('FSD Simulation Fit',completed.stdout)
+            self.assertIn('FSD Cube Simulation Fit',completed.stdout)
             manifest = json.loads((mc_dir/'analysis.json').read_text())
             self.assertEqual(manifest['samples'][0]['sample_kind'],'mc')
-            self.assertEqual(manifest['fits'][0]['title'],'FSD Simulation Fit')
+            self.assertEqual(manifest['fits'][0]['title'],'FSD Cube Simulation Fit')
             self.assertEqual(manifest['fits'][0]['sample_id'],1)
             self.assertTrue((mc_dir/'mc_dqdx.png').exists())
             self.assertTrue((mc_dir/'mc_dqdx.pdf').exists())
