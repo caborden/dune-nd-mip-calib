@@ -1,8 +1,7 @@
 {
   "target": {
-    "kind": "sample",
-    "id": "data-Reflow_FSDCube_v3.binary-cosmics-2026_02_prc2",
-    "selection_version": "v1"
+    "kind": "comparison",
+    "id": "reflow-v3-feb2026-prc2_vs_fsdcube-sim-v1-prc256"
   },
   "run_modules": [
     "dqdx",

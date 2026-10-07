@@ -362,20 +362,46 @@ two productions, create `comparisons/<comparison-id>/comparison.json` with
 
 ## February 2026 periodic-reset scan
 
-The recipes `configs/analyses/data_prc2.json` and `data_prc16.json` use the same
-segmentation and plotting settings as `data.json`. They target
-`data-Reflow_FSDCube_v3.binary-cosmics-2026_02_prc2` and
-`data-Reflow_FSDCube_v3.binary-cosmics-2026_02_prc16`, respectively, selecting v1.
-The sample registries created during selection must point to
-`selection/v1/prc2.track-selection.hdf5` and
-`selection/v1/prc16.track-selection.hdf5`. Both merges must be complete.
+Selections remain under `samples/<sample-id>/selection/v1/`. The reset recipes
+`configs/analyses/data_prc2.json`, `data_prc8.json`, and `data_prc16.json` now target
+paired data/MC comparisons, despite their retained `data_` filenames. All three
+use the existing `mc-FSDCubeSim_v1_prc256` selection and the same analysis settings.
+Their output roots are:
 
-From the repository root on NERSC:
+```text
+fsdcube/comparisons/
+  reflow-v3-feb2026-prc2_vs_fsdcube-sim-v1-prc256/
+  reflow-v3-feb2026-prc8_vs_fsdcube-sim-v1-prc256/
+  reflow-v3-feb2026-prc16_vs_fsdcube-sim-v1-prc256/
+```
+
+Each holds `comparison.json` and `analysis/<run-id>/`, with `config.json`,
+`manifest.json`, `shared/segments.hdf5`, `dqdx/`, and `hit_density/`. No sample-level
+analysis directory is created by these recipes. Sample registries must already
+exist and reference complete schema-2 selections. The historical unsuffixed data
+sample ID is used for prc8; its canonical paths and existing analyses are preserved.
+The old unsuffixed comparison directory is also retained as a historical result;
+the explicitly named prc8 comparison starts a new run rather than moving it.
+
+From the repository root on NERSC, initialize the environment and registries:
+
+```bash
+module load conda
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate /global/common/software/dune/efield2_rcmanduj/
+python prepare_reset_comparisons.py --root "$SCRATCH/fsdcube"
+```
+
+This validates all three data/MC pairs before creating any registry. Repeated
+setup reuses identical registries and refuses conflicting ones. Use
+`--resets prc2 prc16` if only those pairs should be prepared.
+
+Submit from the repository root:
 
 ```bash
 ACCOUNT=YOUR_NERSC_ACCOUNT
 mkdir -p "$SCRATCH/fsdcube/jobs/logs"
-for reset in prc2 prc16; do
+for reset in prc2 prc8 prc16; do
     sbatch -A "$ACCOUNT" \
       --job-name="analysis-${reset}" \
       --output="$SCRATCH/fsdcube/jobs/logs/analysis-${reset}-%j.out" \
@@ -385,43 +411,44 @@ done
 squeue -u "$USER"
 ```
 
-The script loads the existing NERSC environment and runs all implemented modules:
-shared segmentation, dQ/dx, and hit density including hit-count distributions.
-The 32 GB memory and 12 hour walltime requests are starting values, not measured
-requirements; override with `sbatch --mem=... --time=...` as needed.
-Inside a compute allocation with the environment loaded, the equivalent is:
+The script initializes Conda in Bash, prints startup/environment/input diagnostics,
+then runs shared segmentation, dQ/dx, and hit density including hit-count
+distributions and data/MC ratios. The 32 GB memory and 12 hour walltime requests
+are starting values, not measured requirements; override with
+`sbatch --mem=... --time=...` as needed. Each comparison currently extracts its own
+data and MC segment table, so the shared MC is processed once per comparison.
+
+Use a new run ID if the destination already exists. Pass `--resume` as an extra
+argument to the job script to reuse compatible completed stages. Check
+`manifest.json` for per-stage completion and module `analysis.json` files for
+fit/statistics diagnostics. Failed sample-only runs from the previous recipes
+can remain in place: the revised comparison targets use different directories.
+
+For the original startup failures, inspect both combined stdout/stderr logs:
 
 ```bash
-for reset in prc2 prc16; do
-    python -m analysis.run --config "configs/analyses/data_${reset}.json" \
-      --root "$SCRATCH/fsdcube" --run-id run-001 --modules all
-done
+sed -n '1,200p' "$SCRATCH/fsdcube/jobs/logs/analysis-prc2-59505327.out"
+sed -n '1,200p' "$SCRATCH/fsdcube/jobs/logs/analysis-prc16-59505330.out"
 ```
 
-Each sample receives its own `analysis/run-001/`, containing `config.json`,
-`manifest.json`, `shared/segments.hdf5`, `dqdx/`, and `hit_density/`. Check
-`manifest.json` for per-stage completion and each module's `analysis.json`
-for fit/statistics diagnostics. Use a new run ID for different settings. Pass
-`--resume` as an extra argument to the job script to reuse compatible completed
-stages. After a killed job, confirm no writer remains before removing a stale
-`.writer.lock`; see the recovery notes above.
+The short elapsed time and absence of a recorded srun step suggest an early batch
+startup failure; they do not establish its cause. A Conda activation failure,
+missing config/registry/selection, or missing Python dependency should be diagnosed
+from the actual error. After updating, registry preparation is an input preflight,
+and the job's stage markers and error trap identify its failing startup command.
 
 ## Future sample groupings (proposed extension)
 
-Keep selections and individual analyses under `samples/`. Keep plots comparing
-samples under named `comparisons/<id>/analysis/<run>/` directories. The current
-comparison registry and plotting code support at most one data sample and one MC
-sample. A prc2/prc8/prc16 overlay requires a code extension.
+Use `samples/` for immutable selections and production metadata. Prefer named
+`comparisons/` for new analysis products, including groups of samples and their
+MC reference. The existing generic sample-only recipes remain available for
+historical workflows; the reset recipes use comparison targets.
 
-A future comparison registry should list members with separate sample IDs,
-selection versions, display labels, and optional references to completed
-individual analysis runs. Sample identity must be independent of data/MC kind
-throughout segment tables and plotting modules. Comparison manifests should
-record member run signatures, common binning/units, normalization, and any ratio
-reference. Reuse compatible per-sample tables or summaries when possible; do not
+The current comparison registry and plotting code support at most one data sample
+and one MC sample. A prc2/prc8/prc16 overlay requires a code extension. A future
+registry should list members with separate sample IDs, selection versions,
+display labels, and optional references to completed analysis runs. Sample
+identity must be independent of data/MC kind throughout segment tables and plot
+modules. Record member run signatures, common binning/units, normalization, and
+any ratio reference. Reuse compatible tables or summaries when possible; do not
 merge distinct reset productions just to make an overlay.
-
-Preserve the historic unsuffixed prc8 sample's paths and manifests. Add descriptive
-production/reset metadata or display labels rather than renaming completed
-products, since canonical paths participate in resume validation. New sample IDs
-should include distinguishing run conditions such as the reset setting.

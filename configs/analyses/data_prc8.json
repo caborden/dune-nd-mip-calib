@@ -1,7 +1,7 @@
 {
   "target": {
     "kind": "comparison",
-    "id": "reflow-v3-feb2026-prc16_vs_fsdcube-sim-v1-prc256"
+    "id": "reflow-v3-feb2026-prc8_vs_fsdcube-sim-v1-prc256"
   },
   "run_modules": [
     "dqdx",
