@@ -479,11 +479,87 @@ Use `samples/` for immutable selections and production metadata. Prefer named
 MC reference. The existing generic sample-only recipes remain available for
 historical workflows; the reset recipes use comparison targets.
 
-The current comparison registry and plotting code support at most one data sample
-and one MC sample. A prc2/prc8/prc16 overlay requires a code extension. A future
+The `analysis.run` registry and segment plotting code support at most one data
+sample and one MC sample. The separate `analysis.compare_dqdx` command now supports
+overlays of multiple data samples from saved dQ/dx products (see below). A future
 registry should list members with separate sample IDs, selection versions,
 display labels, and optional references to completed analysis runs. Sample
 identity must be independent of data/MC kind throughout segment tables and plot
 modules. Record member run signatures, common binning/units, normalization, and
 any ratio reference. Reuse compatible tables or summaries when possible; do not
 merge distinct reset productions just to make an overlay.
+
+## Overlay the prc2, prc8, and prc16 data dQ/dx distributions
+
+`python -m analysis.compare_dqdx` consumes each completed module's
+`data_dqdx_histogram.csv` and `analysis.json`. It selects the data result from each
+data/MC pair, preserves its saved MPV and chi-squared/ndf, and evaluates the same
+fit function with the saved parameters. It does not refit normalized histograms
+or repeat selection, segmentation, or MC analysis.
+
+The overlay uses common bins and distinct orange/green/purple fills with alpha
+0.5, outlines, and matching fit curves. Each bin shows its fraction of track segments
+within the saved range (currently 0–90 ke−/cm): count divided by the total in-range
+count, without dividing by bin width. Bin fractions sum to one; the y-axis is
+"Fraction of track segments" and has no units. The saved fit curve is also divided
+by the total in-range count.
+This compares shapes despite different sample sizes. Legends show the reset
+label, component MPV, and chi-squared/ndf. Component MPV is the Moyal-like
+component parameter, not the maximum of the convolved curve. The original fit
+range and raw-count fit statistics are retained.
+
+The reader refuses incomplete or stale inputs, inconsistent histogram totals,
+different segmentation/fit settings or relevant analysis-code hashes, duplicate
+data selections, and existing output runs. A failed fit remains visible as a
+histogram with a `Fit unavailable` label. Input product paths, hashes, settings,
+fit summaries, and sample identities are recorded in the overlay manifest.
+The `dqdx-overlay` comparison registry is consumed by this dedicated workflow;
+it is not a data/MC registry for `analysis.run`.
+
+From the repository root on NERSC, select the actual completed source runs. The
+following uses run-002 from the new jobs and the historical prc8 comparison. If
+prc8 was rerun under the explicitly named prc8 comparison, change PRC8 to that
+run's dqdx directory. Source paths are relative to the fsdcube root (absolute
+paths are also accepted); source files are read-only.
+
+```bash
+PRC2="comparisons/reflow-v3-feb2026-prc2_vs_fsdcube-sim-v1-prc256/analysis/run-002/dqdx"
+PRC8="comparisons/reflow-v3-feb2026_vs_fsdcube-sim-v1-prc256/analysis/run-001/dqdx"
+PRC16="comparisons/reflow-v3-feb2026-prc16_vs_fsdcube-sim-v1-prc256/analysis/run-002/dqdx"
+
+mkdir -p "$SCRATCH/fsdcube/jobs/logs"
+env -u SBATCH_MEM_PER_NODE -u SBATCH_MEM_PER_CPU -u SBATCH_MEM_PER_GPU \
+  sbatch -A "$ACCOUNT" --cpus-per-task=2 \
+    --job-name=dqdx-prc-overlay \
+    --output="$SCRATCH/fsdcube/jobs/logs/dqdx-prc-overlay-%j.out" \
+    jobs/compare_dqdx.sbatch "$SCRATCH/fsdcube" run-001 \
+    --member "prc2=$PRC2" --member "prc8=$PRC8" --member "prc16=$PRC16"
+```
+
+The batch wrapper requests two logical CPUs, default site memory, and ten minutes,
+and keeps the explicit srun CPU setting and conflicting-TRES removal. In an
+existing compute allocation with the environment loaded, the direct equivalent is:
+
+```bash
+python -m analysis.compare_dqdx --root "$SCRATCH/fsdcube" --run-id run-001 \
+  --member "prc2=$PRC2" --member "prc8=$PRC8" --member "prc16=$PRC16"
+```
+
+Outputs are stored under:
+
+```text
+comparisons/reflow-v3-feb2026-prc2_vs_prc8_vs_prc16/
+  comparison.json
+  analysis/run-001/
+    config.json
+    manifest.json
+    dqdx_overlay/
+      dqdx_prc_overlay.pdf
+```
+
+The overlay saves only the PDF plot plus its configuration and provenance JSON
+files. Fit summaries remain in the manifest; no duplicate histogram or fit CSVs
+are exported. The source analysis CSV/JSON products are still required as inputs.
+Use a fresh overlay run ID for another rendering; `--alpha` changes fill opacity. Future
+data groupings can use different labeled `--member` inputs and a descriptive
+`--comparison-id` without changing the source sample organization.
