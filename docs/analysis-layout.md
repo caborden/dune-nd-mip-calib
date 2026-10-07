@@ -402,7 +402,8 @@ Submit from the repository root:
 ACCOUNT=YOUR_NERSC_ACCOUNT
 mkdir -p "$SCRATCH/fsdcube/jobs/logs"
 for reset in prc2 prc8 prc16; do
-    sbatch -A "$ACCOUNT" \
+    env -u SBATCH_MEM_PER_NODE -u SBATCH_MEM_PER_CPU -u SBATCH_MEM_PER_GPU \
+      sbatch -A "$ACCOUNT" --cpus-per-task=2 \
       --job-name="analysis-${reset}" \
       --output="$SCRATCH/fsdcube/jobs/logs/analysis-${reset}-%j.out" \
       jobs/analyze_sample.sbatch \
@@ -413,9 +414,12 @@ squeue -u "$USER"
 
 The script initializes Conda in Bash, prints startup/environment/input diagnostics,
 then runs shared segmentation, dQ/dx, and hit density including hit-count
-distributions and data/MC ratios. The 32 GB memory and 12 hour walltime requests
-are starting values, not measured requirements; override with
-`sbatch --mem=... --time=...` as needed. Each comparison currently extracts its own
+distributions and data/MC ratios. It requests two logical CPUs and no explicit
+memory limit, leaving memory to the site's configured default. The submission
+command also removes inherited SBATCH memory overrides. Confirm the effective
+memory request with `sacct` rather than assuming a specific default. The 12 hour
+walltime is a starting value; override with `sbatch --time=...` as needed.
+Each comparison currently extracts its own
 data and MC segment table, so the shared MC is processed once per comparison.
 
 Use a new run ID if the destination already exists. Pass `--resume` as an extra
@@ -431,11 +435,42 @@ sed -n '1,200p' "$SCRATCH/fsdcube/jobs/logs/analysis-prc2-59505327.out"
 sed -n '1,200p' "$SCRATCH/fsdcube/jobs/logs/analysis-prc16-59505330.out"
 ```
 
-The short elapsed time and absence of a recorded srun step suggest an early batch
-startup failure; they do not establish its cause. A Conda activation failure,
-missing config/registry/selection, or missing Python dependency should be diagnosed
-from the actual error. After updating, registry preparation is an input preflight,
-and the job's stage markers and error trap identify its failing startup command.
+The original logs identified conflicting launcher settings:
+`SLURM_CPUS_PER_TASK=18` and `SLURM_TRES_PER_TASK=cpu=2`. Both describe CPUs per
+task, and srun refuses to launch when they disagree. NERSC shared CPU allocations
+are also constrained by memory: 32 GiB at 1952 MiB per logical CPU needs 17 logical
+CPUs, rounded to 18 for nine physical cores. This is consistent with the job's
+CPU count growing beyond the original request of two. The log alone does not
+prove where either variable was last assigned.
+
+The job now requests two logical CPUs with no explicit memory directive, logs
+both CPU variables at entry, passes the allocated `SLURM_CPUS_PER_TASK` explicitly to
+`srun --cpus-per-task`, and removes the redundant `SLURM_TRES_PER_TASK` only from
+that CPU-only launcher's environment. It retains the Slurm job identity and
+allocation variables. Numerical-library thread counts remain one.
+This launch convention should also be used in future CPU-only job scripts.
+GPU steps need their own resource handling because TRES can include GPU requests.
+
+To check the failed jobs' actual allocations:
+
+```bash
+sacct -j 59505327,59505330 -X \
+  --format=JobID,ReqCPUS,AllocCPUS,ReqMem,ReqTRES%70,AllocTRES%70
+```
+
+After resubmission, include step-level peak memory measurements:
+
+```bash
+sacct -j NEW_JOB_ID --format=JobID,State,ExitCode,Elapsed,ReqMem,MaxRSS
+```
+
+To retry after startup failures, use a fresh run ID such as `run-002` to avoid
+collisions with partial runs or stale writer locks. Do not submit a duplicate
+writer to a run that is still active.
+
+Memory-based allocation is documented at
+https://docs.nersc.gov/jobs/examples/#shared. Slurm's environment-variable mappings
+are documented at https://slurm.schedmd.com/srun.html.
 
 ## Future sample groupings (proposed extension)
 

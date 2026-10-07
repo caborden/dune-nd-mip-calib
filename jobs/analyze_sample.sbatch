@@ -4,14 +4,15 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=32G
 #SBATCH --time=12:00:00
 
 # Submit from the repository root with sbatch -A ACCOUNT.
+# Memory uses the site's default; there is no explicit memory request.
 # Arguments: config path, fsdcube root, run ID, optional analysis.run flags.
 set -Eeo pipefail
 trap 'status=$?; echo "ERROR: exit $status at line $LINENO: $BASH_COMMAND" >&2; exit "$status"' ERR
 echo "Job ${SLURM_JOB_ID:-interactive} on $(hostname); submit directory: ${SLURM_SUBMIT_DIR:-unset}"
+echo "Slurm CPU settings: CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}; TRES_PER_TASK=${SLURM_TRES_PER_TASK:-unset}; JOB_CPUS_PER_NODE=${SLURM_JOB_CPUS_PER_NODE:-unset}"
 echo "Loading conda module"
 module load conda
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -44,6 +45,10 @@ for kind, title, path in samples:
     print(kind, path, flush=True)
 PY
 
-srun --cpu-bind=cores python -u -m analysis.run \
+# Shared-QOS memory requirements can increase the allocated CPU count. Use the
+# allocation's value explicitly and remove the potentially stale TRES duplicate
+# only from this CPU-only step's launcher environment.
+step_cpus="${SLURM_CPUS_PER_TASK:?Missing allocated CPUs per task}"
+env -u SLURM_TRES_PER_TASK srun --ntasks=1 --cpus-per-task="$step_cpus" --cpu-bind=cores python -u -m analysis.run \
     --config "$config" --root "$root" --run-id "$run_id" \
     --modules all "$@"
