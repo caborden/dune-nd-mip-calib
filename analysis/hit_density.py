@@ -5,6 +5,7 @@ mean of nhits/dx, using the shared segmentation's physical dx. No hit deduplicat
 new angular cuts, timing conversion, or selection changes are introduced.
 """
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -110,6 +111,7 @@ def summarize(segment_file, settings, chunk_rows=100000):
             samples[sample_id] = dict(sample_id=sample_id, sample_kind=kind,
                 input=str(attrs.get('input_file', '')), tracks={},
                 counts=np.zeros(nbins, dtype=np.int64), sums=np.zeros(nbins), squares=np.zeros(nbins),
+                hit_histograms=[Counter() for _ in range(nbins)],
                 audit=dict(total_segments=0, included_segments=0, below_range=0, above_range=0,
                            invalid_segments=0))
         for start in range(0, len(dataset), chunk_rows):
@@ -136,6 +138,9 @@ def summarize(segment_file, settings, chunk_rows=100000):
                 audit['included_segments'] += len(rows)
                 bins = np.searchsorted(edges, time, side='right')-1
                 bins[time == edges[-1]] = nbins-1  # final bin includes the final edge
+                for index in np.unique(bins):
+                    nhits, frequencies = np.unique(rows['nhits'][bins == index], return_counts=True)
+                    sample['hit_histograms'][index].update(dict(zip(map(int, nhits), map(int, frequencies))))
                 sample['counts'] += np.bincount(bins, minlength=nbins)
                 sample['sums'] += np.bincount(bins, weights=count, minlength=nbins)
                 sample['squares'] += np.bincount(bins, weights=count*count, minlength=nbins)
@@ -169,12 +174,19 @@ def summarize(segment_file, settings, chunk_rows=100000):
         eligible = counts >= settings['min_segments']
         bins = []
         for index in range(nbins):
+            histogram = sample['hit_histograms'][index]
+            nhits = sorted(histogram)
+            frequencies = [histogram[n] for n in nhits]
+            modes = [n for n in nhits if histogram[n] == max(frequencies)] if nhits else []
+            raw_mean = sum(n*histogram[n] for n in nhits)/sum(frequencies) if nhits else None
             bins.append(dict(bin_low=float(edges[index]), bin_high=float(edges[index+1]),
                 bin_center=float((edges[index]+edges[index+1])/2), n_segments=int(counts[index]),
                 n_tracks=int(ntracks[index]), mean=number(mean[index]) if eligible[index] else None,
                 std_dev=number(std[index]), segment_sem=number(sem[index]),
                 error=number(errors[index]) if eligible[index] else None,
-                valid_bootstrap_replicates=int(repetitions[index])))
+                valid_bootstrap_replicates=int(repetitions[index]),
+                hit_count_distribution=dict(nhits=nhits, counts=frequencies,
+                    mean_nhits=raw_mean, mode_nhits=modes)))
         results.append(dict(sample_id=sample_id, sample_kind=sample['sample_kind'], input=sample['input'],
                             n_tracks=len(ordered_tracks), audit=sample['audit'], bins=bins))
     return results, segment_settings
@@ -241,6 +253,58 @@ def save_plot(directory, stem, samples, settings, segment_settings, ratio_bins=N
         plt.close(fig)
 
 
+def save_distributions(directory, samples, settings):
+    """Compare discrete recorded-hit distributions, normalized within each sample/bin."""
+    nbins = settings['drift_bins']
+    ncols = 3
+    nrows = max(3, int(np.ceil(nbins/ncols)))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(13, 3.5*nrows), sharex=True,
+                             squeeze=False)
+    largest = max((max(b['hit_count_distribution']['nhits'], default=0)
+                   for s in samples for b in s['bins']), default=0)
+    edges = np.arange(max(largest, 1)+2)-.5
+    for index, ax in enumerate(axes.flat):
+        if index >= nbins:
+            ax.set_visible(False)
+            continue
+        low, high = settings['drift_edges_ticks'][index:index+2]
+        bracket = ']' if index == nbins-1 else ')'
+        ax.set_title(f'Bin {index+1}: [{low:.1f}, {high:.1f}{bracket} ticks', fontsize=10)
+        notes = []
+        for sample in samples:
+            kind = sample['sample_kind']
+            label, color = ('Data', 'tab:green') if kind == 'data' else ('MC', 'tab:orange')
+            b = sample['bins'][index]
+            hist = b['hit_count_distribution']
+            n = b['n_segments']
+            if not n:
+                notes.append((f'{label}: no segments', color))
+                continue
+            probabilities = np.zeros(len(edges)-1)
+            probabilities[hist['nhits']] = np.asarray(hist['counts'])/n
+            ax.stairs(probabilities, edges, label=label, color=color, linewidth=1.5)
+            ax.axvline(hist['mean_nhits'], color=color, linestyle='--', linewidth=1, alpha=.7)
+            mode = ', '.join(map(str, hist['mode_nhits']))
+            notes.append((f'{label}: n={n:,}, mean={hist["mean_nhits"]:.2f}\nmode={mode}', color))
+        for j, (note, color) in enumerate(notes):
+            ax.text(.97, .97-j*.23, note, transform=ax.transAxes, ha='right', va='top',
+                    fontsize=8, color=color, bbox=dict(facecolor='white', alpha=.8, edgecolor='none'))
+        ax.set(xlim=(edges[0], edges[-1]), ylim=(0, None),
+               xlabel='N recorded hits / segment', ylabel='Fraction of segments')
+        ax.grid(alpha=.25)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(loc='upper left', fontsize=8)
+    fig.suptitle('FSD Cube: hit-count distributions by drift-time bin')
+    fig.text(.5, .008, 'Selected recorded hits; unit-width integer bins; each sample normalized separately. '
+             'Dashed lines: means. Modes are empirical, not fitted MPVs.', ha='center', fontsize=9)
+    fig.tight_layout(rect=(0, .025, 1, .96))
+    try:
+        for extension in ['png', 'pdf']:
+            fig.savefig(directory/f'hit_count_distributions.{extension}', dpi=180)
+    finally:
+        plt.close(fig)
+
+
 def plot_segments(segment_file, output_dir, settings=None):
     """Runner module; only the completed shared segment table is read."""
     settings = make_settings(**(settings or {}))
@@ -252,6 +316,7 @@ def plot_segments(segment_file, output_dir, settings=None):
                     definitions=dict(observable='segment-weighted arithmetic mean',
                         drift_time='median recorded hit t_drift of each segment, unchanged ticks',
                         hit_view='selected recorded hits; repeated hits are not deduplicated',
+                        hit_count_distribution='raw nhits; integer bins; unit area per sample/drift bin; all tied modes reported',
                         bin_edges='left inclusive/right exclusive; final edge included',
                         bootstrap_cluster='(sample_id, file_id, source_event_row, track_id)',
                         bootstrap_population='tracks with at least one valid in-range segment',
@@ -271,6 +336,13 @@ def plot_segments(segment_file, output_dir, settings=None):
             np.savetxt(directory/f'{kind}_hit_density.csv', rows, delimiter=',',
                        header=','.join(keys), comments='')
             save_plot(directory, f'{kind}_hit_density', [sample], settings, segment_settings)
+            histogram_rows = [[b['bin_low'], b['bin_high'], nhits, count, count/b['n_segments']]
+                for b in sample['bins'] for nhits, count in zip(b['hit_count_distribution']['nhits'],
+                                                               b['hit_count_distribution']['counts'])]
+            np.savetxt(directory/f'{kind}_hit_count_distributions.csv',
+                       np.asarray(histogram_rows).reshape(-1, 5), delimiter=',',
+                       header='bin_low,bin_high,nhits,n_segments,fraction', comments='')
+        save_distributions(directory, samples, settings)
         ratio_bins = ratios(samples)
         if ratio_bins:
             save_plot(directory, 'data_mc_hit_density', samples, settings, segment_settings)

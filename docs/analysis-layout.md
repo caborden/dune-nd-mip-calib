@@ -250,10 +250,34 @@ Outputs live under `analysis/<run>/hit_density/`:
 
 - Per-sample `data_hit_density`/`mc_hit_density` PNG, PDF and CSV files.
 - Paired `data_mc_hit_density` PNG/PDF and `data_mc_hit_density_ratio` PNG/PDF/CSV.
+- `hit_count_distributions` PNG/PDF: one composite figure with data/MC overlaid
+  in each drift bin. The default nine bins use a 3x3 grid in increasing row-major
+  order. Other bin counts retain three columns (unused panels are hidden).
+  Unit-width bins are centered on integer recorded-hit counts; each sample is
+  normalized separately within each drift bin to show shape despite different
+  sample sizes. All populated counts, including tails, are retained. Panels
+  report segment counts, arithmetic means (also dashed lines), and empirical
+  modes, including ties. These modes are not fitted MPVs. Empty samples are
+  labeled explicitly. This diagnostic always uses raw `nhits`, including when
+  the main mean plot uses `hits-per-cm`; it is not suppressed by `min_segments`.
+- Per-sample `data_hit_count_distributions.csv`/`mc_hit_count_distributions.csv`
+  save drift-bin edges, integer hit counts, segment frequencies and fractions.
 - `analysis.json`: completed status, definitions, settings, input/code identities,
   segmentation settings, audit counts and all bin summaries (mean, standard
   deviation, segment SEM, displayed error, segment/track counts, valid bootstrap
-  replicates). Missing values are JSON null or CSV NaN.
+  replicates), plus raw hit-count frequencies, means and modes.
+  Missing values are JSON null or CSV NaN.
+
+Refresh this module in an existing paired run after pulling updated code:
+
+```bash
+python -m analysis.run --config configs/analyses/data_mc.json \
+  --root "$SCRATCH/fsdcube" --run-id run-002 \
+  --modules hit_density --rerun hit_density
+```
+
+This reuses compatible shared segments and replaces only the hit-density stage;
+the old stage is archived under the run's `.history/` directory.
 
 To use an already completed table without another extraction, the module also
 has a standalone CLI. This writes independent module products and does not update

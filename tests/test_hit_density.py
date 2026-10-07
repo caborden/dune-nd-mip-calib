@@ -53,6 +53,9 @@ class HitDensityTests(unittest.TestCase):
         self.assertEqual([b['n_tracks'] for b in data['bins']], [2,3])
         self.assertAlmostEqual(data['bins'][0]['mean'], 14/3)
         self.assertEqual(data['bins'][1]['mean'], 8)
+        self.assertEqual(data['bins'][0]['hit_count_distribution'],
+                         dict(nhits=[2,4,8], counts=[1,1,1], mean_nhits=14/3, mode_nhits=[2,4,8]))
+        self.assertEqual(data['bins'][1]['hit_count_distribution']['nhits'], [6,8,10])
         self.assertAlmostEqual(data['bins'][0]['error'], np.std([4,8,2], ddof=1)/np.sqrt(3))
         # Same raw counts; hits/cm divides by physical dx, not the nominal 3 cm.
         per_cm, _ = summarize(self.path, make_settings(drift_edges_ticks=[0,10,20],
@@ -99,10 +102,29 @@ class HitDensityTests(unittest.TestCase):
         self.assertEqual(result['status'], 'complete')
         self.assertTrue((self.root/'mc/mc_hit_density.pdf').exists())
         self.assertTrue((self.root/'mc/mc_hit_density.csv').exists())
+        self.assertTrue((self.root/'mc/hit_count_distributions.png').exists())
+        histogram = np.loadtxt(self.root/'mc/mc_hit_count_distributions.csv', delimiter=',', skiprows=1)
+        np.testing.assert_allclose(histogram, [[0,10,2,1,.5], [0,10,4,1,.5]])
         self.assertFalse((self.root/'mc/data_mc_hit_density.png').exists())
         # No NaN tokens in JSON; missing observations/errors are null.
         saved = (self.root/'mc/analysis.json').read_text()
         self.assertNotIn('NaN', saved)
+
+    def test_skewed_distributions_and_paired_grid(self):
+        self.write([(0,0,0,0,5,n,3,b'io1') for n in [2,2,2,10]] +
+                   [(1,0,0,0,5,n,3,b'io1') for n in [4,4,8]] +
+                   [(0,0,0,0,5000,6,3,b'io1'), (1,0,0,0,5001,99,3,b'io1')], (0,1))
+        result = plot_segments(self.path, self.root/'paired', make_settings(uncertainty='none'))
+        data, mc = result['samples']
+        self.assertEqual(data['bins'][0]['hit_count_distribution'],
+                         dict(nhits=[2,10], counts=[3,1], mean_nhits=4., mode_nhits=[2]))
+        self.assertEqual(mc['bins'][0]['hit_count_distribution']['mode_nhits'], [4])
+        self.assertEqual(data['bins'][-1]['hit_count_distribution']['nhits'], [6])
+        self.assertEqual(mc['bins'][-1]['hit_count_distribution']['nhits'], [])
+        self.assertEqual(mc['audit']['above_range'], 1)
+        self.assertTrue((self.root/'paired/hit_count_distributions.pdf').exists())
+        rows = np.loadtxt(self.root/'paired/data_hit_count_distributions.csv', delimiter=',', skiprows=1)
+        self.assertEqual(rows[rows[:,0] == 0,4].sum(), 1.)
 
     def test_empty_sample_invalid_dx_and_ratio_zero_handling(self):
         self.write([], (0,1))
