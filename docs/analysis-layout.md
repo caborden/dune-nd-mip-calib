@@ -358,3 +358,70 @@ Copy an analysis recipe, change its target ID, and use a fresh run ID. To compar
 two productions, create `comparisons/<comparison-id>/comparison.json` with
 `samples.data` and `samples.mc` reference objects containing `id` and
 `selection_version`. Outputs then belong to the comparison directory.
+
+
+## February 2026 periodic-reset scan
+
+The recipes `configs/analyses/data_prc2.json` and `data_prc16.json` use the same
+segmentation and plotting settings as `data.json`. They target
+`data-Reflow_FSDCube_v3.binary-cosmics-2026_02_prc2` and
+`data-Reflow_FSDCube_v3.binary-cosmics-2026_02_prc16`, respectively, selecting v1.
+The sample registries created during selection must point to
+`selection/v1/prc2.track-selection.hdf5` and
+`selection/v1/prc16.track-selection.hdf5`. Both merges must be complete.
+
+From the repository root on NERSC:
+
+```bash
+ACCOUNT=YOUR_NERSC_ACCOUNT
+mkdir -p "$SCRATCH/fsdcube/jobs/logs"
+for reset in prc2 prc16; do
+    sbatch -A "$ACCOUNT" \
+      --job-name="analysis-${reset}" \
+      --output="$SCRATCH/fsdcube/jobs/logs/analysis-${reset}-%j.out" \
+      jobs/analyze_sample.sbatch \
+      "configs/analyses/data_${reset}.json" "$SCRATCH/fsdcube" run-001
+done
+squeue -u "$USER"
+```
+
+The script loads the existing NERSC environment and runs all implemented modules:
+shared segmentation, dQ/dx, and hit density including hit-count distributions.
+The 32 GB memory and 12 hour walltime requests are starting values, not measured
+requirements; override with `sbatch --mem=... --time=...` as needed.
+Inside a compute allocation with the environment loaded, the equivalent is:
+
+```bash
+for reset in prc2 prc16; do
+    python -m analysis.run --config "configs/analyses/data_${reset}.json" \
+      --root "$SCRATCH/fsdcube" --run-id run-001 --modules all
+done
+```
+
+Each sample receives its own `analysis/run-001/`, containing `config.json`,
+`manifest.json`, `shared/segments.hdf5`, `dqdx/`, and `hit_density/`. Check
+`manifest.json` for per-stage completion and each module's `analysis.json`
+for fit/statistics diagnostics. Use a new run ID for different settings. Pass
+`--resume` as an extra argument to the job script to reuse compatible completed
+stages. After a killed job, confirm no writer remains before removing a stale
+`.writer.lock`; see the recovery notes above.
+
+## Future sample groupings (proposed extension)
+
+Keep selections and individual analyses under `samples/`. Keep plots comparing
+samples under named `comparisons/<id>/analysis/<run>/` directories. The current
+comparison registry and plotting code support at most one data sample and one MC
+sample. A prc2/prc8/prc16 overlay requires a code extension.
+
+A future comparison registry should list members with separate sample IDs,
+selection versions, display labels, and optional references to completed
+individual analysis runs. Sample identity must be independent of data/MC kind
+throughout segment tables and plotting modules. Comparison manifests should
+record member run signatures, common binning/units, normalization, and any ratio
+reference. Reuse compatible per-sample tables or summaries when possible; do not
+merge distinct reset productions just to make an overlay.
+
+Preserve the historic unsuffixed prc8 sample's paths and manifests. Add descriptive
+production/reset metadata or display labels rather than renaming completed
+products, since canonical paths participate in resume validation. New sample IDs
+should include distinguishing run conditions such as the reset setting.

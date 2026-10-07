@@ -1,0 +1,46 @@
+{
+  "target": {
+    "kind": "sample",
+    "id": "data-Reflow_FSDCube_v3.binary-cosmics-2026_02_prc2",
+    "selection_version": "v1"
+  },
+  "run_modules": [
+    "dqdx",
+    "hit_density"
+  ],
+  "segments": {
+    "segment_length_cm": 3.0,
+    "step_cm": 3.0,
+    "grouping": "io-group",
+    "face_cuts": "auto",
+    "face_margin_cm": 1.0,
+    "require_through_going": false,
+    "geometry": {}
+  },
+  "modules": {
+    "dqdx": {
+      "bins": 100,
+      "hist_range": [
+        0.0,
+        90.0
+      ],
+      "fit_range": [
+        20.0,
+        50.0
+      ],
+      "min_fit_entries": 100
+    },
+    "hit_density": {
+      "drift_bins": 9,
+      "drift_range_ticks": [
+        0.0,
+        5000.0
+      ],
+      "observable": "hits-per-segment",
+      "uncertainty": "track-bootstrap",
+      "bootstrap_samples": 1000,
+      "bootstrap_seed": 12345,
+      "min_segments": 1
+    }
+  }
+}
