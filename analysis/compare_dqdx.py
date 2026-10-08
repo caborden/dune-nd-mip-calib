@@ -12,6 +12,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.optimize import brentq, minimize_scalar
 
 from .io import code_hashes, file_identity, read_json, safe_name, write_json
 from pixel_dqdx.dqdx import langau
@@ -19,6 +20,48 @@ from pixel_dqdx.dqdx import langau
 
 DEFAULT_COMPARISON = 'reflow-v3-feb2026-prc2_vs_prc8_vs_prc16'
 COLORS = ['#E69F00', '#009E73', '#CC79A7', '#0072B2', '#D55E00', '#56B4E9']
+
+
+def fitted_widths(fit):
+    """Measure the full saved convolution, independent of display/fit ranges."""
+    if fit['status'] != 'fit':
+        return dict(status='unavailable', reason='Fit unavailable')
+    mpv, eta, sigma, _ = fit['params']
+    scale = max(eta, sigma)
+
+    def curve(x):
+        # Amplitude cancels in a half-maximum width; use one for stability.
+        # exp(-xi) can overflow in the far-left Moyal tail, where the PDF is zero.
+        with np.errstate(over='ignore'):
+            return float(langau(np.asarray([x], dtype=float), mpv, eta, sigma, 1.)[0])
+
+    try:
+        peak = minimize_scalar(lambda x: -curve(x),
+                               bounds=(mpv-8*scale, mpv+16*scale),
+                               method='bounded', options={'xatol': scale*1e-6})
+        half = curve(peak.x)/2
+        if not peak.success or not np.isfinite(half) or half <= 0:
+            raise ValueError('Could not locate a finite positive fitted peak')
+
+        def crossing(direction):
+            distance = scale
+            for _ in range(30):
+                edge = peak.x + direction*distance
+                if curve(edge) < half:
+                    low, high = sorted((edge, peak.x))
+                    return float(brentq(lambda x: curve(x)-half, low, high,
+                                        xtol=scale*1e-6))
+                distance *= 2
+            raise ValueError('Could not bracket a half-maximum crossing')
+
+        left, right = crossing(-1), crossing(1)
+        width = right-left
+        return dict(status='complete', peak_dqdx=float(peak.x),
+                    half_max_left=left, half_max_right=right, fwhm=width,
+                    fwhm_over_component_mpv=width/mpv if mpv > 0 else None,
+                    units='ke−/cm')
+    except (ValueError, RuntimeError, FloatingPointError) as exc:
+        return dict(status='unavailable', reason=str(exc))
 
 
 def product_identity(path):
@@ -75,7 +118,7 @@ def load_member(label, directory):
     elif fit['status'] != 'no_fit':
         raise ValueError(f'{label}: unsupported fit status: {fit["status"]}')
     return dict(label=label, directory=str(directory), products=identities,
-                sample=sample, fit=fit, settings=settings,
+                sample=sample, fit=fit, widths=fitted_widths(fit), settings=settings,
                 source_hashes=report.get('source_hashes', {}),
                 edges=edges, counts=counts, fraction=counts/total)
 
@@ -90,6 +133,14 @@ def draw_overlay(members, output_dir, alpha):
             if fit['status'] == 'fit':
                 label = (f"{member['label']}   Component MPV = {fit['mpv']:.2f} ke−/cm"
                          f"   $\\chi^2$/ndf = {fit['chi2_red']:.2f}")
+                widths = member['widths']
+                if widths['status'] == 'complete':
+                    ratio = widths['fwhm_over_component_mpv']
+                    ratio_text = f'{ratio:.3f}' if ratio is not None else 'undefined'
+                    label += (f"\nFWHM = {widths['fwhm']:.2f} ke−/cm"
+                              f"   FWHM/MPV = {ratio_text}")
+                else:
+                    label += '\nFWHM unavailable'
             else:
                 label = f"{member['label']}   Fit unavailable"
             ax.stairs(member['fraction'], edges, fill=True, color=color, alpha=alpha, label=label)
@@ -101,12 +152,13 @@ def draw_overlay(members, output_dir, alpha):
         ax.set(title='FSD Cube data: periodic-reset dependence',
                xlabel='dQ/dx [ke−/cm]', ylabel='Fraction of track segments',
                xlim=settings['hist_range'], ylim=(0, None))
-        ax.set_ylim(top=ax.get_ylim()[1]*1.22)
+        ax.set_ylim(top=ax.get_ylim()[1]*1.6)
         ax.legend(loc='upper right', fontsize=9, framealpha=.95)
         ax.grid(axis='y', alpha=.18)
         low, high = settings['hist_range']
         fig.text(.5, .025,
                  f'Bin fractions sum to 1 over {low:g}–{high:g} ke−/cm; solid curves are saved fits.\n'
+                 'FWHM: full fitted convolution; ratio uses component MPV. Widths have no uncertainty estimate.\n'
                  'Fit: upstream Moyal-like approximation convolved with Gaussian; MPV is the component parameter.',
                  ha='center', va='bottom', fontsize=8)
         fig.tight_layout(rect=(0, .08, 1, 1))

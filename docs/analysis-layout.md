@@ -504,7 +504,14 @@ count, without dividing by bin width. Bin fractions sum to one; the y-axis is
 "Fraction of track segments" and has no units. The saved fit curve is also divided
 by the total in-range count.
 This compares shapes despite different sample sizes. Legends show the reset
-label, component MPV, and chi-squared/ndf. Component MPV is the Moyal-like
+label, component MPV, and chi-squared/ndf. A second legend line gives the fitted
+convolution's FWHM in ke−/cm and dimensionless FWHM/component-MPV. The width is
+the separation of the two half-maximum crossings around the convolution's peak,
+evaluated from saved fit parameters without truncation to the displayed or fit
+range. No refitting or width uncertainty calculation is performed. These derived
+widths and crossing positions are recorded in each member's manifest entry;
+unavailable fits/widths are labeled, and a nonpositive MPV has an undefined ratio.
+Component MPV is the Moyal-like
 component parameter, not the maximum of the convolved curve. The original fit
 range and raw-count fit statistics are retained.
 
@@ -563,3 +570,15 @@ are exported. The source analysis CSV/JSON products are still required as inputs
 Use a fresh overlay run ID for another rendering; `--alpha` changes fill opacity. Future
 data groupings can use different labeled `--member` inputs and a descriptive
 `--comparison-id` without changing the source sample organization.
+
+To render the width annotations without a batch submission and preserve the
+existing plot, activate the analysis environment and run from the repository root
+with the member paths above:
+
+```bash
+python -m analysis.compare_dqdx --root "$SCRATCH/fsdcube" --run-id run-fwhm-001 \
+  --member "prc2=$PRC2" --member "prc8=$PRC8" --member "prc16=$PRC16"
+```
+
+This writes `analysis/run-fwhm-001/dqdx_overlay/dqdx_prc_overlay.pdf` under the
+same overlay comparison. Existing run directories are refused, never overwritten.

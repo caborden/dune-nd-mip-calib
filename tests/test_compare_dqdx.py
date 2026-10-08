@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from analysis.compare_dqdx import compare, load_member, DEFAULT_COMPARISON
+from analysis.compare_dqdx import compare, load_member, fitted_widths, DEFAULT_COMPARISON
 from analysis.config import make_settings
 from analysis.io import code_hashes, read_json, write_json
 from pixel_dqdx.dqdx import langau
@@ -52,6 +52,11 @@ class DqdxOverlayTests(unittest.TestCase):
         fits = [member['fit'] for member in manifest['members']]
         self.assertEqual([f['mpv'] for f in fits], [31.8, 33.3, 34.8])
         self.assertEqual([f['chi2_red'] for f in fits], [2.5, 3.5, 4.5])
+        widths = [m['widths'] for m in manifest['members']]
+        self.assertTrue(all(w['status'] == 'complete' for w in widths))
+        np.testing.assert_allclose([w['fwhm'] for w in widths], widths[0]['fwhm'], rtol=1e-6)
+        for fit, width in zip(fits, widths):
+            self.assertAlmostEqual(width['fwhm_over_component_mpv'], width['fwhm']/fit['mpv'])
         products = list((output/'dqdx_overlay').iterdir())
         self.assertEqual([p.name for p in products], ['dqdx_prc_overlay.pdf'])
         self.assertGreater(products[0].stat().st_size, 1000)
@@ -91,7 +96,32 @@ class DqdxOverlayTests(unittest.TestCase):
         write_json(path, report)
         member = load_member(*self.members[0])
         self.assertEqual(member['fit']['status'], 'no_fit')
+        self.assertEqual(member['widths']['status'], 'unavailable')
         self.assertAlmostEqual(np.sum(member['fraction']), 1)
+
+
+class FittedWidthTests(unittest.TestCase):
+    def test_gaussian_limit_and_untruncated_crossings(self):
+        # A very narrow Moyal convolved with a Gaussian approaches its FWHM.
+        width = fitted_widths(dict(status='fit', params=[49., .02, 3., 100.]))
+        self.assertEqual(width['status'], 'complete')
+        self.assertAlmostEqual(width['fwhm'], 2*np.sqrt(2*np.log(2))*3, delta=.002)
+        self.assertGreater(width['half_max_right'], 50.)
+
+    def test_translation_amplitude_invariance_and_mpv_ratio(self):
+        first = fitted_widths(dict(status='fit', params=[30., 2.8, 5.3, 10.]))
+        shifted = fitted_widths(dict(status='fit', params=[40., 2.8, 5.3, 10000.]))
+        self.assertEqual(first['status'], 'complete')
+        self.assertEqual(shifted['status'], 'complete')
+        self.assertAlmostEqual(first['fwhm'], shifted['fwhm'], places=5)
+        self.assertAlmostEqual(shifted['peak_dqdx']-first['peak_dqdx'], 10., places=5)
+        self.assertAlmostEqual(first['fwhm_over_component_mpv'], first['fwhm']/30.)
+        self.assertGreater(first['fwhm_over_component_mpv'], shifted['fwhm_over_component_mpv'])
+
+    def test_nonpositive_mpv_does_not_produce_relative_width(self):
+        width = fitted_widths(dict(status='fit', params=[0., 2.8, 5.3, 10.]))
+        self.assertEqual(width['status'], 'complete')
+        self.assertIsNone(width['fwhm_over_component_mpv'])
 
 
 if __name__ == '__main__':
