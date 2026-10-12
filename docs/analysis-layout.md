@@ -582,3 +582,88 @@ python -m analysis.compare_dqdx --root "$SCRATCH/fsdcube" --run-id run-fwhm-001 
 
 This writes `analysis/run-fwhm-001/dqdx_overlay/dqdx_prc_overlay.pdf` under the
 same overlay comparison. Existing run directories are refused, never overwritten.
+
+## Component MPV versus drift time with track-bootstrap errors
+
+`python -m analysis.mpv_drift` reads completed shared segment tables. It uses
+15 equal drift bins from 0 to 5000 CRS ticks (left-inclusive; 5000 is included in
+the final bin), 100 dQ/dx bins over 0–90 ke−/cm, and the existing Moyal-like
+component/Gaussian convolution fit over 20–50 ke−/cm. Fits need at least 100
+entries in the fit range and five populated fit bins. It validates matching
+segmentation settings and positive, matching `crs_ticks` metadata for every
+source in every sample. No time conversion or lifetime correction is applied.
+
+Each point is the original histogram's fitted component MPV. Error bars are the
+sample standard deviation (`ddof=1`) of successful bootstrap MPV fits, with no
+division by sqrt(number of replicas). Each replica draws N tracks with replacement
+from the N tracks represented in that sample's segment table, including tracks
+whose segments are outside the displayed ranges. All segments and readout groups
+of `(file_id, source_event_row, track_id)` receive one common multiplicity across
+all drift bins. Independent data/MC streams use stable label-specific seeds.
+This captures within-track correlation, but does not model correlations between
+separate tracks in the same event or calibration/selection/model systematics.
+
+The default is 1000 replicates. An error bar requires two contributing tracks,
+a successful original fit, and at least 90% successful bootstrap fits (and at
+least two). Success counts/fractions and failures are recorded per bin. Original
+points with unavailable uncertainty use open markers; failed original fits are
+omitted. No fit-covariance error is silently substituted. Fit-covariance MPV SE is
+saved separately as a diagnostic. No component-width or Gaussian-width outputs
+are produced.
+
+The lower panel is data component MPV / shared MC component MPV. Each ratio uses
+the same MC bootstrap array, paired by replica index with its data bootstrap.
+Ratio error bars are the standard deviation of these ratios, subject to the same
+success threshold and available numerator/denominator uncertainties. Saved NPZ
+arrays preserve replica ordering, NaNs for failed fits, and correlations across
+drift bins and across ratios sharing MC. They can support later trend fitting.
+
+Example inputs (adjust run IDs to the completed runs):
+
+```bash
+PRC2="comparisons/reflow-v3-feb2026-prc2_vs_fsdcube-sim-v1-prc256/analysis/run-002/shared/segments.hdf5"
+PRC8="comparisons/reflow-v3-feb2026_vs_fsdcube-sim-v1-prc256/analysis/run-001/shared/segments.hdf5"
+PRC16="comparisons/reflow-v3-feb2026-prc16_vs_fsdcube-sim-v1-prc256/analysis/run-002/shared/segments.hdf5"
+python -u -m analysis.mpv_drift --root "$SCRATCH/fsdcube" \
+  --data "prc2=$PRC2" --data "prc8=$PRC8" --data "prc16=$PRC16" \
+  --mc "$PRC8" --run-id mpv-drift-001 --bootstrap-samples 1000
+```
+
+Run this on compute resources. Unlike the histogram overlay, this can require
+60,060 nonlinear fits: four samples times fifteen bins times 1001 original plus
+bootstrap histograms. A real prc8 drift-bin fit took about 0.66 seconds on the
+local development machine; full production can therefore take hours, and fit
+costs vary by bin. Start with `--bootstrap-samples 20 --run-id mpv-drift-pilot`
+to measure speed and reveal sparse MC bins; that pilot is not a final uncertainty
+estimate. Use a separate run ID for the 1000-replica result.
+
+Checkpoints are written every ten replicas and at sample completion. Repeat the
+same command with `--resume` to continue a stopped run, with unchanged input
+identities, code, runtime, seed, replica count, and settings. Replica-indexed RNG
+makes continuation identical to uninterrupted execution. A killed process may
+leave `.writer.lock`; confirm the old process/allocation has stopped before
+removing that one lock. Never run two writers in the same output directory.
+
+Outputs live under
+`comparisons/reflow-v3-feb2026-prc2_vs_prc8_vs_prc16/analysis/<run-id>/`:
+`manifest.json` contains settings, provenance, per-bin MPVs/standard errors,
+success fractions, and ratios; `mpv_drift/` contains `mpv_drift.png/.pdf`,
+per-sample summary JSON, and sample/ratio bootstrap NPZ arrays. The existing
+histogram-overlay comparison registry is left intact.
+
+For the full run, a batch wrapper is available with two logical CPUs, no explicit
+memory request, the same launcher fix, and a twelve-hour limit:
+
+```bash
+env -u SBATCH_MEM_PER_NODE -u SBATCH_MEM_PER_CPU -u SBATCH_MEM_PER_GPU \
+  sbatch -A "$ACCOUNT" --cpus-per-task=2 --job-name=mpv-drift \
+    --output="$SCRATCH/fsdcube/jobs/logs/mpv-drift-%j.out" \
+    jobs/mpv_drift.sbatch --root "$SCRATCH/fsdcube" \
+    --data "prc2=$PRC2" --data "prc8=$PRC8" --data "prc16=$PRC16" \
+    --mc "$PRC8" --run-id mpv-drift-001 --bootstrap-samples 1000
+```
+
+A local two-replica smoke test of the historical prc8 table found valid original
+fits in all fifteen data bins but only eight MC bins under the existing 100-entry
+fit-range threshold. Additional MC statistics may be needed for a complete ratio
+curve. That smoke test validates execution and layout, not uncertainty convergence.
