@@ -2,6 +2,11 @@
 
 Track selection for LArTPC data using DBSCAN and PCA fits.
 
+For interactive FSD/FSD Cube detector, pixel-layout, and signal/readout notebooks,
+see [the visualization tools](visualizations/README.md). The geometry and teaching
+examples run locally without CUDA; an optional adapter captures real larnd-sim
+currents and ADC readings in an existing GPU environment.
+
 The recommended analysis workflow uses sample folders for data and MC and
 comparison folders for paired analyses. Selections live under `selection/v1/`;
 each analysis run has shared derived tables and separate module output folders.
