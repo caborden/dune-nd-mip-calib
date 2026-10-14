@@ -341,6 +341,10 @@ The three comparison recipes isolate statistic and selection effects:
 | `data_mc_top_bottom_mean.json` | Mean | Top-bottom crossing |
 | `data_mc_top_bottom_mpv.json` | Empirical MPV | Top-bottom crossing |
 
+These three recipes and `data_mc.json` target the explicitly named prc8/MC
+comparison, `reflow-v3-feb2026-prc8_vs_fsdcube-sim-v1-prc256`. They no longer
+require the historical unsuffixed comparison directory.
+
 Run the requested combination in a separate analysis directory:
 
 ```bash
