@@ -667,3 +667,73 @@ A local two-replica smoke test of the historical prc8 table found valid original
 fits in all fifteen data bins but only eight MC bins under the existing 100-entry
 fit-range threshold. Additional MC statistics may be needed for a complete ratio
 curve. That smoke test validates execution and layout, not uncertainty convergence.
+
+## Time separation of two-hit pixels
+
+`python -m analysis.hit_time_difference` compares data and MC using the complete
+schema-2 selection hit tables. Within each saved event it groups hits by
+`(io_group, io_channel, chip_id, channel_id)` and keeps only pixels with exactly
+two recorded hits. Source file and source event identities remain separate.
+Pixels with three or more hits are excluded, rather than yielding adjacent pairs.
+Multiplicity is counted before rejecting nonfinite timestamps.
+
+The default observable is `abs(ts_pps[1] - ts_pps[0])`, in CRS ticks. Integer
+subtraction precedes float conversion, preserving small differences between
+large timestamps without unsigned underflow. Equal timestamps yield zero and
+are retained. The optional `--time-field t_drift` uses the difference of saved
+calibrated drift times instead; the script never silently substitutes fields or
+applies rollover corrections. Source tick periods must be available and agree
+within and between the data and MC samples.
+
+All saved event hits participate, including hits rejected by track selection;
+there are no additional charge, disabled-channel, or fiducial cuts. The population
+is conditional on the saved events containing an accepted track, not an inclusive
+cosmic-data sample. `pairs_both_selected` in the audit reports how many pairs have
+both hits selected, without filtering the plotted population.
+
+Each data/MC bin is normalized by the total number of exactly-two-hit
+pixel/event instances in that sample, without dividing by bin width. Different
+pixels in one event count separately. The denominator includes instances outside
+the plotted range and those with invalid timestamps; their counts are audited.
+Thus the sum of displayed bin fractions can be less than one. CSV files contain
+raw counts and a `fraction` column; the manifest records `normalization_instances`. The default is 200 bins
+over 0–200 ticks (one tick per bin), resolving the short separations observed in
+the local prc8 sample. The manifest records pairs above the upper bound, invalid-time
+pairs, zero separations, multiplicity counts, source identities, and elapsed time.
+Empty histograms are explicitly labeled. This is a single pass over event hit
+slices with no fitting or bootstrap; memory is bounded by one event plus the
+small histogram arrays.
+
+From the NERSC checkout with the analysis environment loaded:
+
+```bash
+for reset in prc2 prc8 prc16; do
+    python -u -m analysis.hit_time_difference \
+      --config "configs/analyses/data_${reset}.json" \
+      --root "$SCRATCH/fsdcube" --run-id hit-timing-001 \
+      --data-label "Data ${reset}"
+done
+```
+
+This uses the existing per-reset data/MC comparison registries prepared with
+`prepare_reset_comparisons.py`. Each comparison receives its own
+`analysis/hit-timing-001/manifest.json`, `config.json`, and a
+`hit_time_difference/` folder with `hit_time_difference.png/.pdf` and
+`data_delta_t.csv`/`mc_delta_t.csv`. Use a fresh run ID to change the binning, e.g.
+`--run-id hit-timing-zoom-001 --max-delta-ticks 500 --bins 100`. Existing runs are
+refused. This standalone module reads selection outputs directly and does not
+rebuild the existing segment-based analyses.
+
+A local full prc8/MC run processed 896,118 data hits and 20,771 MC hits in about
+3.3 seconds. Direct execution is suitable for these sample sizes; no batch
+submission is needed for this plot. NERSC filesystem speed can change the timing.
+
+The fraction-normalized local prc8 preview has 185,172 data instances and 5,162
+MC instances. Of these, 2,185 and 3 respectively lie above 200 ticks. The MC
+minimum is 33 ticks; the data's main rise is around 31–32 ticks, but this is not
+a strict measured hardware limit. Data include 268 zero-separation pairs whose
+linked packet fields match after excluding source bookkeeping and receipt time,
+and 11 positive separations below 30 ticks. These remain included, not silently
+deduplicated. Both samples report a 0.1 microsecond CRS tick. The saved metadata
+do not establish the production ADC hold/busy/reset settings, so the histogram
+alone cannot determine the configured minimum cycle time.
