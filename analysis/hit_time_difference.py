@@ -96,18 +96,51 @@ def summarize(path, edges, time_field='ts_pps'):
     return dict(counts=counts, audit=dict(audit), crs_ticks=next(iter(periods.values())))
 
 
+def resolve_inputs(root, config, data_label):
+    """Resolve a paired registry or an explicit, labeled multi-sample recipe."""
+    if config['target']['kind'] != 'comparison':
+        raise ValueError('Use a comparison recipe')
+    if 'samples' not in config:
+        target, inputs = resolve_target(root, config['target'])
+        if {kind for kind, _, _ in inputs} != {'data', 'mc'}:
+            raise ValueError('Comparison must contain data and MC')
+        return target, [(kind, data_label if kind == 'data' else 'MC', path, kind)
+                        for kind, _, path in inputs]
+    references = config['samples']
+    if not references or sum(r['kind'] == 'mc' for r in references.values()) != 1:
+        raise ValueError('Combined comparison requires exactly one shared MC sample')
+    if not any(r['kind'] == 'data' for r in references.values()):
+        raise ValueError('Combined comparison requires data')
+    inputs = []
+    for key, reference in references.items():
+        safe_name(key)
+        _, resolved = resolve_target(root, dict(kind='sample', id=reference['id'],
+                                               selection_version=reference.get('selection_version', 'v1')))
+        kind, _, path = resolved[0]
+        if kind != reference['kind']:
+            raise ValueError(f'Sample kind mismatch for {key}')
+        inputs.append((key, reference.get('label', key), path, kind))
+    if len({path for _, _, path, _ in inputs}) != len(inputs):
+        raise ValueError('Combined comparison repeats a selection file')
+    target = root/'comparisons'/safe_name(config['target']['id'])
+    registry = dict(id=config['target']['id'], kind='hit-time-comparison', samples=references)
+    registry_path = target/'comparison.json'
+    if registry_path.exists():
+        if read_json(registry_path) != registry:
+            raise FileExistsError(f'Existing comparison registry differs: {registry_path}')
+    else:
+        write_json(registry_path, registry)
+    return target, inputs
+
+
 def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='ts_pps', data_label='Data'):
     if bins < 1 or not np.isfinite(max_delta_ticks) or max_delta_ticks <= 0:
         raise ValueError('Require positive bin count and maximum time difference')
     if time_field not in {'ts_pps', 't_drift'}:
         raise ValueError('time_field must be ts_pps or t_drift')
     config = read_json(config_path)
-    if config['target']['kind'] != 'comparison':
-        raise ValueError('Use a data/MC comparison recipe')
-    target, inputs = resolve_target(Path(root).resolve(), config['target'])
-    if {kind for kind, _, _ in inputs} != {'data', 'mc'}:
-        raise ValueError('Comparison must contain data and MC')
-    identities = {kind: file_identity(path) for kind, _, path in inputs}
+    target, inputs = resolve_inputs(Path(root).resolve(), config, data_label)
+    identities = {key: file_identity(path) for key, _, path, _ in inputs}
     edges = np.linspace(0, max_delta_ticks, bins+1)
     directory = target/'analysis'/safe_name(run_id)
     directory.mkdir(parents=True, exist_ok=False)
@@ -121,25 +154,30 @@ def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='t
                     population='only events with at least one accepted track are present in selections')
     manifest = dict(status='running', created_utc=datetime.now(timezone.utc).isoformat(),
                     inputs=identities, settings=settings, source_hashes=code_hashes(['analysis/hit_time_difference.py']))
-    write_json(directory/'config.json', dict(target=config['target'], settings=settings, data_label=data_label))
+    write_json(directory/'config.json', dict(recipe=config, settings=settings, data_label=data_label))
     write_json(directory/'manifest.json', manifest)
     start = time.monotonic()
     try:
-        samples = {kind: summarize(path, edges, time_field) for kind, _, path in inputs}
-        if not np.isclose(samples['data']['crs_ticks'], samples['mc']['crs_ticks'], rtol=1e-10, atol=0):
+        samples = {key: summarize(path, edges, time_field) for key, _, path, _ in inputs}
+        periods = [sample['crs_ticks'] for sample in samples.values()]
+        if not np.allclose(periods, periods[0], rtol=1e-10, atol=0):
             raise ValueError('Data and MC CRS tick periods differ')
         fig, ax = plt.subplots(figsize=(9, 5.5))
         try:
-            for kind, color, label in [('data', '#0072B2', data_label), ('mc', '#E69F00', 'MC')]:
-                sample = samples[kind]
+            colors = iter(['#0072B2', '#009E73', '#CC79A7', '#D55E00', '#56B4E9'])
+            for key, label, _, kind in inputs:
+                color = '#E69F00' if kind == 'mc' else next(colors, None)
+                sample = samples[key]
+                sample.update(label=label, kind=kind)
                 counts = sample['counts']
                 n = sample['audit'].get('pixels_two_hits', 0)
                 sample['normalization_instances'] = n
                 overflow = sample['audit'].get('pairs_above_range', 0)
                 fraction = counts/n if n else np.zeros(len(counts))
                 ax.stairs(fraction, edges, color=color, linewidth=1.4,
+                          linestyle='--' if kind == 'mc' else '-',
                           label=f'{label}: {n:,} instances; {overflow:,} above range' if n else f'{label}: no two-hit instances')
-                np.savetxt(output/f'{kind}_delta_t.csv', np.column_stack([edges[:-1], edges[1:], counts, fraction]),
+                np.savetxt(output/f'{key}_delta_t.csv', np.column_stack([edges[:-1], edges[1:], counts, fraction]),
                            delimiter=',', header='bin_low_ticks,bin_high_ticks,count,fraction', comments='')
                 print(f'{label}: {sample["audit"]}', flush=True)
             ax.set(title='Time separation in pixels with exactly two hits', xlabel='Hit time separation |Δt| [CRS ticks]',
@@ -153,7 +191,7 @@ def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='t
                 fig.savefig(output/f'hit_time_difference.{ext}', dpi=180)
         finally:
             plt.close(fig)
-        if identities != {kind: file_identity(path) for kind, _, path in inputs}:
+        if identities != {key: file_identity(path) for key, _, path, _ in inputs}:
             raise ValueError('Input changed during analysis')
         manifest.update(status='complete', elapsed_seconds=time.monotonic()-start,
                         samples={kind: {key: value for key, value in sample.items() if key != 'counts'}
@@ -168,7 +206,7 @@ def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='t
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='existing data/MC comparison recipe')
+    parser.add_argument('--config', required=True, help='paired data/MC or combined multi-sample comparison recipe')
     parser.add_argument('--root', required=True)
     parser.add_argument('--run-id', default='hit-timing-001')
     parser.add_argument('--bins', type=int, default=200)

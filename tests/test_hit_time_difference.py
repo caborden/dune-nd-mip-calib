@@ -1,6 +1,8 @@
 """Two-hit multiplicity, event/source boundaries, and exact timestamp arithmetic."""
 from pathlib import Path
 import tempfile
+import shutil
+from unittest.mock import patch
 import unittest
 
 import h5py
@@ -76,6 +78,37 @@ class HitTimeDifferenceTests(unittest.TestCase):
             self.assertGreater((output/'hit_time_difference/hit_time_difference.png').stat().st_size, 1000)
             with self.assertRaises(FileExistsError):
                 run(config, root, 'test')
+            # Three distinct data inputs plus one MC, with different bin populations.
+            refs = {}
+            for reset, delta in [('prc2', 2), ('prc8', 6), ('prc16', 20)]:
+                sample_dir = root/'samples'/reset
+                shutil.copytree(root/'samples/data', sample_dir)
+                with h5py.File(sample_dir/'selection.hdf5', 'r+') as f:
+                    rows = f['events/hits'][:]
+                    rows['ts_pps'][1] = rows['ts_pps'][0] + delta
+                    f['events/hits'][:] = rows
+                refs[reset] = dict(kind='data', id=reset, label='Data '+reset)
+            refs['mc'] = dict(kind='mc', id='mc', label='MC prc256')
+            combined = root/'combined.json'
+            write_json(combined, dict(target=dict(kind='comparison', id='combined'), samples=refs))
+            with patch('analysis.hit_time_difference.summarize', wraps=summarize) as scan:
+                result_dir = run(combined, root, 'overlay', bins=2, max_delta_ticks=10)
+                self.assertEqual(scan.call_count, 4)
+                self.assertEqual(sum(call.args[0] == path.resolve() for call in scan.call_args_list), 1)
+            manifest = read_json(result_dir/'manifest.json')
+            self.assertEqual(set(manifest['samples']), set(refs))
+            for key, expected in [('prc2', [.5, .25]), ('prc8', [.25, .5]),
+                                  ('prc16', [.25, .25]), ('mc', [.5, .25])]:
+                table = np.genfromtxt(result_dir/'hit_time_difference'/f'{key}_delta_t.csv',
+                                     delimiter=',', names=True)
+                np.testing.assert_allclose(table['fraction'], expected)
+            self.assertEqual(read_json(root/'comparisons/combined/comparison.json')['samples'], refs)
+            # A rerun with a fresh ID reuses the matching registry.
+            run(combined, root, 'overlay-again', bins=2, max_delta_ticks=10)
+            refs['prc2']['label'] = 'Changed label'
+            write_json(combined, dict(target=dict(kind='comparison', id='combined'), samples=refs))
+            with self.assertRaisesRegex(FileExistsError, 'registry differs'):
+                run(combined, root, 'conflict')
             with h5py.File(path, 'r+') as f:
                 f['events/data'][0] = (0, 0, 0, 5)
             with self.assertRaisesRegex(ValueError, 'crosses source'):

@@ -737,3 +737,26 @@ and 11 positive separations below 30 ticks. These remain included, not silently
 deduplicated. Both samples report a 0.1 microsecond CRS tick. The saved metadata
 do not establish the production ADC hold/busy/reset settings, so the histogram
 alone cannot determine the configured minimum cycle time.
+
+### Combined periodic-reset hit timing plot
+
+Overlay prc2, prc8, prc16, and the shared MC once using:
+
+```bash
+python -u -m analysis.hit_time_difference \
+  --config configs/analyses/hit_timing_prc_comparison.json \
+  --root "$SCRATCH/fsdcube" --run-id hit-timing-fraction-001
+```
+
+This recipe resolves the existing sample registries directly; no pair-registry
+preparation is required. It creates a dedicated `hit-time-comparison` registry
+under `comparisons/reflow-v3-feb2026-prc2_vs_prc8_vs_prc16_vs_fsdcube-sim-v1-prc256/`.
+The standalone hit-timing module consumes this multi-sample recipe; it is not a
+paired registry for the segment-analysis runner. A conflicting existing registry
+is rejected. Outputs are under `analysis/<run-id>/hit_time_difference/`, with one
+PNG/PDF overlay and separate `data_prc2_delta_t.csv`, `data_prc8_delta_t.csv`,
+`data_prc16_delta_t.csv`, and `mc_delta_t.csv` tables. Each curve retains its own
+all-two-hit-instance denominator, including overflow. Data use distinct colors;
+MC uses a dashed orange line. Tick periods must agree across all four samples.
+Existing paired recipes and their command-line arguments remain supported.
+Choose a new run ID for each rerun; the existing outputs are not overwritten.
