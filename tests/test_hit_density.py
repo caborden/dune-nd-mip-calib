@@ -143,7 +143,12 @@ class HitDensityTests(unittest.TestCase):
     def test_invalid_configuration_and_incomplete_tables(self):
         for options in [dict(drift_edges_ticks=[0,0,10]), dict(drift_bins=0),
                         dict(drift_range_ticks=[5,0]), dict(bootstrap_samples=1),
-                        dict(observable='pixels'), dict(uncertainty='unknown')]:
+                        dict(observable='pixels'), dict(uncertainty='unknown'),
+                        dict(statistic='median'), dict(statistic='mpv', observable='hits-per-cm'),
+                        dict(statistic='mpv', uncertainty='segment-sem'), dict(track_selection='side-side'),
+                        dict(track_selection='top-bottom'), dict(top_bottom_y_bounds_cm=[10,0]),
+                        dict(top_bottom_y_bounds_cm=[0,1], top_bottom_margin_cm=1),
+                        dict(top_bottom_margin_cm=-1)]:
             with self.assertRaises(ValueError):
                 make_settings(**options)
         self.write([], (0,))
@@ -151,3 +156,54 @@ class HitDensityTests(unittest.TestCase):
             f.attrs['status'] = 'incomplete'
         with self.assertRaisesRegex(ValueError, 'incomplete'):
             summarize(self.path, make_settings())
+
+    def test_mpv_resamples_whole_track_histograms_and_reports_ties(self):
+        self.write([(0,0,0,0,5,2,3,b'io1')]*10 + [(0,0,0,1,5,8,3,b'io2')]*10)
+        settings = make_settings(statistic='mpv', bootstrap_samples=2000)
+        samples, _ = summarize(self.path, settings, chunk_rows=3)
+        repeated, _ = summarize(self.path, settings, chunk_rows=100)
+        self.assertEqual(samples, repeated)
+        b = samples[0]['bins'][0]
+        self.assertEqual(b['mean'], 5)
+        self.assertEqual(b['mpv'], 2)  # lowest tied mode, never the midpoint
+        self.assertEqual(b['value'], 2)
+        self.assertEqual(b['hit_count_distribution']['mode_nhits'], [2,8])
+        # AA, AB, BA choose 2; BB chooses 8: SD = 6*sqrt(.75*.25).
+        self.assertAlmostEqual(b['error'], 6*np.sqrt(.75*.25), delta=.2)
+        self.assertIsNone(samples[0]['bins'][1]['mpv'])
+        self.assertIsNone(samples[0]['bins'][1]['error'])
+        mc = dict(sample_kind='mc', bins=[dict(b, value=4, mean=50)])
+        self.assertEqual(ratios([dict(samples[0], bins=[b]), mc])[0]['ratio'], .5)
+
+    def test_top_bottom_scopes_tracks_and_uses_original_selected_hits(self):
+        # Segments are interior: the cut must examine the original hits, not segment centers.
+        self.write([(0,0,0,7,5,2,3,b'io1'), (0,1,0,7,5,100,3,b'io1'),
+                    (0,0,1,7,5,4,3,b'io1'), (0,0,2,7,5,100,3,b'io1')])
+        source_path = self.root/'selection.hdf5'
+        dtype = [('file_id','i8'),('source_event_row','i8'),('selected_track_id','i8'),('y','f8')]
+        hits = [(0,0,7,.1),(0,0,7,9.9),(1,0,7,.1),(1,0,7,8),
+                (1,0,-1,9.9),(0,1,7,.1),(0,1,7,9.9),(0,2,7,-100),(0,2,7,100)]
+        with h5py.File(source_path, 'w') as f:
+            f.attrs.update(status='complete', schema_version='2.0')
+            f.create_dataset('events/hits', data=np.array(hits, dtype=dtype))
+        with h5py.File(self.path, 'r+') as f:
+            f['samples/0'].attrs.update(input_file=str(source_path),
+                input_size_bytes=source_path.stat().st_size, input_mtime_ns=source_path.stat().st_mtime_ns)
+        settings = make_settings(statistic='mpv', track_selection='top-bottom',
+                                 top_bottom_y_bounds_cm=[0,10], top_bottom_margin_cm=1, uncertainty='none')
+        samples, _ = summarize(self.path, settings, chunk_rows=1)
+        repeated, _ = summarize(self.path, settings, chunk_rows=100)
+        self.assertEqual(samples, repeated)
+        sample = samples[0]
+        self.assertEqual(sample['track_selection']['tracks_examined'], 4)
+        self.assertEqual(sample['track_selection']['tracks_accepted'], 2)
+        self.assertEqual(sample['audit']['track_selection_excluded_segments'], 2)
+        self.assertEqual(sample['bins'][0]['mean'], 3)
+        self.assertEqual(sample['bins'][0]['mpv'], 2)
+        output = plot_segments(self.path, self.root/'top-bottom', settings)
+        self.assertEqual(output['status'], 'complete')
+        self.assertTrue((self.root/'top-bottom/data_top_bottom_tracks.csv').exists())
+        with h5py.File(self.path, 'r+') as f:
+            f['samples/0'].attrs['input_mtime_ns'] = 0
+        with self.assertRaisesRegex(ValueError, 'identity differs'):
+            summarize(self.path, settings)

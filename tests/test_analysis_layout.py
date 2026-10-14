@@ -172,6 +172,25 @@ class LayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '--rerun segments'):
             run(self.config, self.base, 'run-001', resume=True)
 
+    def test_mpv_top_bottom_rerun_reuses_segments(self):
+        self.migrate()
+        with redirect_stdout(io.StringIO()):
+            directory = run(self.config, self.base, 'crossing-check', modules=['hit_density'])
+        table = directory/'shared/segments.hdf5'
+        before = table.stat().st_mtime_ns
+        config = read_json(self.config)
+        config['modules'] = {'hit_density': dict(statistic='mpv', track_selection='top-bottom',
+            top_bottom_y_bounds_cm=[0,10], top_bottom_margin_cm=1, bootstrap_samples=20)}
+        write_json(self.config, config)
+        with redirect_stdout(io.StringIO()):
+            run(self.config, self.base, 'crossing-check', modules=['hit_density'], rerun=['hit_density'])
+        self.assertEqual(table.stat().st_mtime_ns, before)
+        result = read_json(directory/'hit_density/analysis.json')
+        self.assertEqual(result['settings']['statistic'], 'mpv')
+        for sample in result['samples']:
+            self.assertEqual(sample['track_selection']['tracks_accepted'], 1)
+            self.assertTrue((directory/'hit_density'/f'{sample["sample_kind"]}_top_bottom_tracks.csv').exists())
+
     def test_imported_run_refresh_titles_preserves_table_and_history(self):
         # Old imported tables did not always store sample_kind, and have old titles.
         with h5py.File(self.base/'dqdx_data_mc_v1/segments.hdf5', 'r+') as f:

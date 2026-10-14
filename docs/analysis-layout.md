@@ -290,6 +290,76 @@ python -m analysis.hit_density --segments /path/to/shared/segments.hdf5 \
   --drift-bins 9 --drift-range-ticks 0 5000 --uncertainty track-bootstrap
 ```
 
+### Empirical MPV and top-bottom crossing comparisons
+
+`modules.hit_density.statistic` accepts `mean` (default) or `mpv`. MPV means
+the most populated **integer recorded-hit count**, with one segment per entry.
+It is not a fitted Landau peak. All tied modes remain in `hit_count_distribution.mode_nhits`;
+the lowest tied count is the plotted value, consistently in the original sample
+and bootstrap resamples. Only `hits-per-segment` is supported for MPV. Use
+`track-bootstrap` or `none` uncertainty; `segment-sem` describes the mean and
+is rejected for MPV. Bootstrap resampling keeps whole tracks together and
+recomputes the mode from their hit-count histograms. Discrete-mode errors can be
+zero when every resample picks the same integer; they are not confidence intervals
+and do not establish that the population mode is known exactly. Sparse MC bins
+and tied peaks warrant inspecting the accompanying distribution grid.
+
+The CSV `mean` and `mpv` columns are saved together; `value` and `error` describe
+the requested statistic. Ratios use that same statistic. The approximate ratio
+errors retain first-order independent-data/MC propagation, which can be crude
+for discrete modes. The mean remains available for comparison in the JSON/CSV.
+
+`track_selection: "top-bottom"` applies a lightweight filter inside the plotting
+module. It streams the existing selection's hit table once, using only
+`selected_track_id >= 0` hits with finite y. Each `(file_id, source_event_row,
+track_id)` must have its minimum y within `top_bottom_margin_cm` of the bottom
+and its maximum y within that margin of the top. IO groups from the same track
+are combined. This is an observed-hit face-reaching criterion for the already
+selected straight tracks, not an extrapolated line-intersection test. It needs
+both y faces, unlike the older `require_through_going` any-two-faces criterion.
+It filters all segments of accepted tracks without additional fiducial trimming
+or resegmentation. Input paths, sizes and mtimes must match the shared table's
+provenance. The main selection HDF5 must remain accessible.
+
+Explicit `top_bottom_y_bounds_cm` is required: the stored geometry bounds for
+these samples still contain full-FSD y limits. The supplied Cube recipes use
+`[119.04, 148.80]` cm and a 1 cm margin. These face positions are inferred from
+the observed pixel-center range `[119.226, 148.614]` cm plus half the 0.372 cm
+pitch, not independently surveyed field-cage faces. They match the coordinates
+of the current data and MC selections; adjust for another geometry/coordinate
+frame. The code never infers detector faces from each track's own endpoints.
+
+Audits report examined/accepted tracks and rejected segments. Accepted IDs and
+y extents are saved as `data_top_bottom_tracks.csv`/`mc_top_bottom_tracks.csv`
+and in `analysis.json`, so the subset can be reused without duplicating hits.
+
+The three comparison recipes isolate statistic and selection effects:
+
+| Recipe | Statistic | Track sample |
+| --- | --- | --- |
+| `data_mc_mpv.json` | Empirical MPV | All selected tracks |
+| `data_mc_top_bottom_mean.json` | Mean | Top-bottom crossing |
+| `data_mc_top_bottom_mpv.json` | Empirical MPV | Top-bottom crossing |
+
+Run the requested combination in a separate analysis directory:
+
+```bash
+python -m analysis.run --config configs/analyses/data_mc_top_bottom_mpv.json \
+  --root "$SCRATCH/fsdcube" --run-id run-top-bottom-mpv-001 --modules hit_density
+```
+
+A new run builds its shared segments from the existing selection HDF5s and then
+applies the plotting filter. No FLOW reselection is required. For a faster refresh
+using compatible segments already in `run-002` (archives/replaces that run's
+hit-density plots), use the same configuration with
+`--run-id run-002 --modules hit_density --rerun hit_density`. This does not require
+`--rerun segments`, because selection happens in the plotting module. Later
+updates of the new run likewise use `--rerun hit_density`.
+
+The standalone module exposes `--statistic mpv --track-selection top-bottom
+--top-bottom-y-bounds-cm 119.04 148.80 --top-bottom-margin-cm 1` with the same
+semantics. It writes a new module directory rather than updating a runner manifest.
+
 ## Migrate the existing NERSC directories
 
 Finish any selection/merge/analysis jobs writing these directories first.
