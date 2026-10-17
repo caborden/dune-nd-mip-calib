@@ -123,7 +123,7 @@ def load_member(label, directory):
                 edges=edges, counts=counts, fraction=counts/total)
 
 
-def draw_overlay(members, output_dir, alpha):
+def draw_overlay(members, output_dir, alpha, title='FSD Cube data: periodic-reset dependence'):
     settings = members[0]['settings']
     fig, ax = plt.subplots(figsize=(10.5, 6.5))
     try:
@@ -149,7 +149,7 @@ def draw_overlay(members, output_dir, alpha):
                 x = np.linspace(*settings['fit_range'], 250)
                 scale = member['counts'].sum()
                 ax.plot(x, langau(x, *fit['params'])/scale, color=color, linewidth=2)
-        ax.set(title='FSD Cube data: periodic-reset dependence',
+        ax.set(title=title,
                xlabel='dQ/dx [ke−/cm]', ylabel='Fraction of track segments',
                xlim=settings['hist_range'], ylim=(0, None))
         ax.set_ylim(top=ax.get_ylim()[1]*1.6)

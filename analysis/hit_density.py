@@ -319,8 +319,8 @@ def save_plot(directory, stem, samples, settings, segment_settings, ratio_bins=N
     if ratio_bins is None:
         for sample in samples:
             kind = sample['sample_kind']
-            draw_series(ax, sample['bins'], 'value', 'Data' if kind == 'data' else 'MC',
-                        'tab:green' if kind == 'data' else 'tab:orange')
+            draw_series(ax, sample['bins'], 'value', sample.get('label', 'Data' if kind == 'data' else 'MC'),
+                        sample.get('color', 'tab:green' if kind == 'data' else 'tab:orange'))
         length = segment_settings.get('segment_length_cm')
         label = (f'{statistic_label} N hits / {length:g} cm segment' if length is not None else f'{statistic_label} N hits / segment')
         if settings['observable'] == 'hits-per-cm':

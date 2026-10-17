@@ -10,6 +10,7 @@ from .config import make_settings, SEGMENT_KEYS
 from .dqdx import plot_segments, sample_title
 from .hit_density import (plot_segments as plot_hit_density, make_settings as make_hit_density_settings,
                           SETTING_KEYS as HIT_DENSITY_KEYS)
+from .selection_hits import analyze as analyze_hits, make_settings as hit_settings, SETTING_KEYS as HIT_KEYS
 from .segments import build_segments
 from .run_state import components, upgrade_legacy, adopt_imported, start_history, publish
 from .io import (read_json, write_json, fingerprint, file_identity, code_hashes,
@@ -17,6 +18,8 @@ from .io import (read_json, write_json, fingerprint, file_identity, code_hashes,
 
 # Register future modules here, with explicit shared-table dependencies.
 MODULES = {
+    'selection_hits': dict(dependencies=[], code=['analysis/selection_hits.py'],
+                           settings=HIT_KEYS, output='selection_hits'),
     'segments': dict(dependencies=[], code=['analysis/segments.py', 'pixel_dqdx/segments.py'],
                      settings=SEGMENT_KEYS, output='shared/segments.hdf5'),
     'dqdx': dict(dependencies=['segments'], code=['analysis/dqdx.py', 'pixel_dqdx/dqdx.py'],
@@ -96,7 +99,9 @@ def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
             raise ValueError(f'Unknown module/options: {name}')
     settings = make_settings(**segment_settings, **module_settings.get('dqdx', {}))
     density_settings = make_hit_density_settings(**module_settings.get('hit_density', {}))
+    selection_hit_settings = hit_settings(**module_settings.get('selection_hits', {}))
     stage_settings = {
+        'selection_hits': selection_hit_settings,
         'segments': {key: settings[key] for key in SEGMENT_KEYS},
         'dqdx': {key: settings[key] for key in MODULES['dqdx']['settings']},
         'hit_density': density_settings,
@@ -111,7 +116,7 @@ def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
     resume = resume or bool(forced)
     inputs = {kind: file_identity(path) for kind, _, path in samples}
     resolved = dict(target=config['target'], inputs=inputs, settings=settings,
-                    module_settings={'hit_density': density_settings})
+                    module_settings={'hit_density': density_settings, 'selection_hits': selection_hit_settings})
     directory = target_dir/'analysis'/safe_name(run_id)
     manifest_path = directory/'manifest.json'
     if directory.exists() and not resume:
@@ -178,7 +183,10 @@ def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
             temporary.mkdir()
             print(f'Run {name}: {destination}', flush=True)
             try:
-                if name == 'segments':
+                if name == 'selection_hits':
+                    analyze_hits(samples, temporary, selection_hit_settings)
+                    ready = temporary
+                elif name == 'segments':
                     build_segments(samples, temporary/'segments.hdf5', stage_settings['segments'])
                     ready = temporary/'segments.hdf5'
                 elif name == 'dqdx':

@@ -834,3 +834,45 @@ all-two-hit-instance denominator, including overflow. Data use distinct colors;
 MC uses a dashed orange line. Tick periods must agree across all four samples.
 Existing paired recipes and their command-line arguments remain supported.
 Choose a new run ID for each rerun; the existing outputs are not overwritten.
+
+### Selected-hit diagnostics and comparisons of data runs
+
+The `selection_hits` runner module reads schema-2 selections directly. It is
+included by `--modules all` and supports the runner's `--resume` and
+`--rerun selection_hits` options. It does not depend on the segment table.
+
+- Charge: every stored hit with `selected_track_id >= 0` contributes once.
+  Default 100 bins over 0–100 ke−, configurable with module options
+  `charge_bins` and `charge_range`. Q is used without further correction.
+  Nonfinite charge, underflow and overflow counts are saved in `analysis.json`.
+- Pixel multiplicity: count selected hits per occupied electronics pixel within
+  each source event, then pool those counts across events. Pixel identity is
+  `(io_group, io_channel, chip_id, channel_id)`; event identity includes file ID.
+  Hits from different tracks on the same pixel/event combine. Rejected hits and
+  zero-hit pixels do not contribute. Negative or nonfinite address fields are
+  excluded from multiplicity and audited; they still contribute charge.
+- Outputs: charge/multiplicity PNG and PDF plots, raw-count CSVs for each sample,
+  and JSON definitions, source identities, code hashes and audit counters.
+  Histograms are normalized separately to compare different sample sizes.
+  Charge normalization uses in-range hits; multiplicity uses occupied pixel-events.
+
+`configs/analyses/feb2026_prc16.json` and `oct2026_prc16.json` run dQ/dx,
+hit density and these diagnostics for the two registered samples. Their existing
+segment, fit and drift-bin settings match `data_prc16.json` unchanged.
+
+After both sample runs finish, use `python -m analysis.compare_runs` with
+`--root ROOT --comparison-id ID --run-id NEW_ID` and repeated
+`--member 'LABEL=PATH_TO_ANALYSIS_RUN'`. Member paths may be relative to ROOT.
+The comparator expects completed single-data runs with all four stages complete,
+matching scientific settings/code, and distinct selection inputs. It writes
+four overlay PDFs (plus PNGs for hit density and the two new diagnostics), and
+an input/output provenance manifest. It reuses saved dQ/dx fits and existing
+hit-density uncertainties. It does not refit or recompute segmentation.
+
+Use labels such as `Feb 2026 prc16 data` and `Oct 2026 prc16 data`. The dQ/dx
+comparison retains the existing filled histogram/fit format, with a general
+FSD Cube data-comparison title. Hit-density axes, binning and bootstrap errors
+are retained. No data/MC ratio is produced for this data/data comparison.
+`jobs/compare_runs.sbatch ROOT NEW_RUN_ID --comparison-id ID --member ...`
+provides the NERSC wrapper. Comparison outputs require a new run ID; per-sample
+outputs retain the general runner's resume/rerun behavior.
