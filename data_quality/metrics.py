@@ -234,8 +234,13 @@ class Sample:
             self.warnings.append(f'{info["path"]}: ADC omitted; need packet_type and dataword in {path}.')
             return
         self.coverage['adc'].append(info['path'])
+        info['packet_rows'] = len(f[path])
+        type_counts = Counter()
+        data_before = self.audit['data_packet_rows']
         for block in chunks(f[path], self.settings['chunk_size']):
             self.audit['packet_rows'] += len(block)
+            types, counts = np.unique(block['packet_type'], return_counts=True)
+            type_counts.update({str(int(k)): int(v) for k, v in zip(types, counts)})
             data = block[block['packet_type'] == 0]
             self.audit['data_packet_rows'] += len(data)
             self.histograms['adc'].add(data['dataword'])
@@ -244,6 +249,10 @@ class Sample:
             if 'valid_parity' in data.dtype.names:
                 self.audit['data_packets_with_parity_available'] += len(data)
                 self.audit['data_packets_invalid_parity'] += int((data['valid_parity'] == 0).sum())
+        info['packet_type_counts'] = dict(type_counts)
+        if self.audit['data_packet_rows'] == data_before:
+            self.warnings.append(f'{info["path"]}: ADC fields exist but no packet_type=0 rows were selected '
+                                 f'from {info["packet_rows"]} packet rows. See packet_type_counts in the file audit.')
 
     def channel_rows(self):
         for key, channel in sorted(self.channels.items()):

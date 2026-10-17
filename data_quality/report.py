@@ -43,6 +43,29 @@ def ratio(numerator, denominator):
     return result
 
 
+def draw_ratio(ax, centers, values, reference_counts, settings, color):
+    """Bound only the display. Preserve extremes with boundary triangles.
+
+    Hollow symbols mark sparse reference bins, not a significance test or a
+    rejection. Numerator zeros are retained; zero denominators remain undefined.
+    """
+    low, high = settings['ratio_ylim']
+    finite = np.isfinite(values)
+    sparse = reference_counts < settings['ratio_min_reference_count']
+    below, above = finite & (values < low), finite & (values > high)
+    within = finite & ~below & ~above
+    for selected, marker in ((within, 'o'), (below, 'v'), (above, '^')):
+        for hollow in (False, True):
+            mask = selected & (sparse == hollow)
+            ax.scatter(centers[mask], np.clip(values[mask], low, high),
+                       s=12 if marker == 'o' else 25, marker=marker,
+                       facecolors='none' if hollow else color, edgecolors=color,
+                       linewidths=.7, clip_on=False, zorder=3)
+    ax.set_ylim(low, high)
+    return dict(undefined=int((~finite).sum()), low_reference_count=int((finite & sparse).sum()),
+                below_display=int(below.sum()), above_display=int(above.sum()))
+
+
 def sample_summary(sample):
     warnings = list(sample.warnings)
     for name, hist in sample.histograms.items():
@@ -108,22 +131,28 @@ def render(samples, axes, output, manifest):
                                            gridspec_kw={'height_ratios': [3, 1]}, layout='constrained')
             ref = reference.histograms[key]
             ref_fraction = ref.counts / max(ref.total, 1)
+            display_audit = {}
             for sample_index, sample in enumerate(samples):
                 hist = sample.histograms[key]
                 fraction = hist.counts / max(hist.total, 1)
-                coverage = f'{len(sample.coverage[key])}/{len(sample.files)} files'
+                coverage = f'fields: {len(sample.coverage[key])}/{len(sample.files)} inputs'
                 color = f'C{sample_index % 10}'
                 ax.stairs(fraction, hist.edges,
                           label=f'{sample.label}: N={hist.total:,}; {coverage}', linewidth=1.5, color=color)
                 centers = (hist.edges[1:]+hist.edges[:-1])/2
                 values = ratio(fraction, ref_fraction)
                 if sample is not reference and hist.total:
-                    lower.plot(centers, values, '.', ms=2, label=sample.label, color=color)
+                    display_audit[sample.name] = draw_ratio(lower, centers, values, ref.counts,
+                                                          sample.settings, color)
                 write_csv(tables/f'{sample.name}_{key}.csv', [
                     dict(low=lo, high=hi, count=int(count), fraction=float(frac),
-                         ratio_to_reference=float(rat))
-                    for lo, hi, count, frac, rat in zip(hist.edges[:-1], hist.edges[1:],
-                                                       hist.counts, fraction, values)])
+                         ratio_to_reference=float(rat), reference_count=int(ref_count),
+                         ratio_low_reference_count=bool(ref_count < sample.settings['ratio_min_reference_count']),
+                         ratio_outside_display=bool(np.isfinite(rat) and not
+                                                    sample.settings['ratio_ylim'][0] <= rat <= sample.settings['ratio_ylim'][1]))
+                    for lo, hi, count, frac, rat, ref_count in zip(hist.edges[:-1], hist.edges[1:],
+                                                                  hist.counts, fraction, values, ref.counts)])
+            manifest.setdefault('ratio_display', {})[key] = display_audit
             if any(np.any(s.histograms[key].counts) for s in samples):
                 ax.set_yscale('log')
             else:
@@ -132,11 +161,22 @@ def render(samples, axes, output, manifest):
             ax.legend(fontsize=8)
             ax.grid(alpha=.2)
             lower.axhline(1, color='gray', lw=1)
+            lower.set_ylim(*reference.settings['ratio_ylim'])
             lower.set(xlabel=label, ylabel='Ratio to\n'+reference.name)
             lower.grid(alpha=.2)
+            if display_audit:
+                clipped = sum(v['above_display'] + v['below_display'] for v in display_audit.values())
+                lower.text(.99, .96, f'Triangles: {clipped} off-scale bins; open: reference < '
+                           f'{reference.settings["ratio_min_reference_count"]}',
+                           transform=lower.transAxes, ha='right', va='top', fontsize=7,
+                           bbox=dict(facecolor='white', edgecolor='none', alpha=.85))
+            else:
+                lower.text(.5, .5, 'No comparison entries', ha='center', transform=lower.transAxes)
             caption = ('Counts pooled across files before normalization. N includes nonfinite and out-of-range '
                        'entries supplied to this histogram; displayed fractions may sum to less than one. '
-                       'Undefined ratios are omitted; ratios are descriptive, with no independence assumption.')
+                       'Undefined ratios are omitted. Ratio limits affect display only: triangles mark off-scale '
+                       'values and open symbols mark sparse reference bins. All finite ratios remain in the CSV. '
+                       'Ratios are descriptive, with no independence assumption.')
             if key == 'adc':
                 caption += ' ADC uses all packet_type=0 rows, not only packets associated to calibrated hits.'
             if key == 'event_duration_us':
@@ -153,7 +193,7 @@ def render(samples, axes, output, manifest):
                 item = sample.projections[pair]
                 mesh = ax.pcolormesh(axes[pair[0]], axes[pair[1]], np.ma.masked_less_equal(values.T, 0), norm=norm, cmap='viridis')
                 ax.set(xlabel=f'{pair[0]} [cm]', ylabel=f'{pair[1]} [cm]',
-                       title=f'{sample.label}\n{item["files"]}/{len(sample.files)} files')
+                       title=f'{sample.label}\nCoordinates: {item["files"]}/{len(sample.files)} inputs')
                 ax.set_aspect('equal')
                 fig.colorbar(mesh, ax=ax, label='Fraction of hit rows / bin')
                 np.savez_compressed(tables/f'{sample.name}_{pair}.npz', counts=item['counts'],
@@ -248,7 +288,8 @@ body{font:16px system-ui;max-width:1200px;margin:30px auto;padding:0 20px;color:
 img{max-width:100%}section{border-top:1px solid #ddd;margin-top:35px}td,th{padding:8px;text-align:left}
 table{border-collapse:collapse}tr{border-bottom:1px solid #ddd}li{overflow-wrap:anywhere}</style>
 <h1>Inclusive FLOW sample comparison</h1><p>No track selection. Inputs pooled within each sample.
-Charge units require calibration verification. No live-time or lifetime correction is applied.</p>
+Stored Q values are interpreted as '''+html.escape(samples[0].settings['charge_unit'])+'''
+without numerical rescaling. No live-time or lifetime correction is applied.</p>
 <p><a href="report.pdf">Plot PDF</a> · <a href="summary.json">Metadata and integrity audit</a> ·
 <a href="tables/">Numerical tables</a></p>
 <table><tr><th>Sample</th><th>Files</th><th>Hit rows</th><th>Event rows</th>

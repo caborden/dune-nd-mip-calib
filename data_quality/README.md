@@ -4,8 +4,13 @@ Compare one or more original FLOW samples without track selection or a merged
 input file. Every file contributes to collective sample accumulators. There are
 no per-file plots. The first sample is the reference for ratio panels.
 
-The example config lists the four February 2026 and two October 2026 files
-provided for the half-field, PRC16 comparison. Other operating conditions are
+The example config selects all matching date subdirectories below the February
+`cold/scan/lt_prc16` and October `halfField_5ke_prc16_processed_flow/flow` roots.
+An earlier version listed only the four February and two October filenames shown
+in the initial request; reports made with that version cover only those files.
+Run `--check-inputs` to verify the expanded file counts before submitting a job.
+The exact expanded list is saved in `config.resolved.json` for each run.
+Other operating conditions are
 not established by their filenames. Paths have not been verified on NERSC from
 the local development machine; run the input check below.
 
@@ -17,7 +22,7 @@ the local development machine; run the input check below.
 | `flow.py` | Read-only HDF5 access, input deduplication, metadata/schema inspection, and bounded forward event-to-hit reference traversal. |
 | `metrics.py` | Streaming hit/packet/event histograms, per-channel occupancy and binned charge medians, exact integer timing differences, spatial projections. |
 | `report.py` | Collective overlays and ratios, spatial/channel maps, CSV/NPZ tables, HTML report, multipage plot PDF, and audit JSON. |
-| `config.example.json` | Explicit six-file sample definition, labels, binning, selected hit collection, and memory controls. |
+| `config.example.json` | Full-sample file patterns across date subdirectories, labels, binning, ratio-display settings, and memory controls. |
 | `run_nersc.sbatch` | CPU shared-queue job using the existing analysis conda environment and the repository's Slurm launch convention. |
 | `test_data_quality.py` | Synthetic FLOW regression tests, including unequal-size files, references, timing, missing fields, and report generation. |
 | `requirements.txt` | Only NumPy, h5py, and Matplotlib are needed; no h5flow or track-analysis dependencies. |
@@ -80,6 +85,11 @@ python -m data_quality.run \
 
 This checks all paths and required schemas, prints hit/event counts, optional
 packet fields, reference availability, and CRS tick periods, and writes nothing.
+Plot legends use `fields: A/B inputs`: A is the number of resolved input files
+with the fields needed for that metric and B is the number configured/resolved
+for the sample. This does not count all files elsewhere on disk, and fields being
+present does not guarantee populated data. In particular an ADC schema can be
+present even when there are no data packets selected.
 It does not scan all hit values or verify all reference contents. A successful
 preflight is not a completed quality analysis. Required inputs are
 `charge/events/data` and the configured calibrated-hit dataset, with scalar
@@ -173,6 +183,8 @@ packets; parity failures are counted separately. Without both `packet_type` and
 `dataword`, ADC plots are unavailable. `adc_max` defaults to 255 and the audit
 counts values at/above that configured endpoint; verify the electronics setting
 before interpreting endpoint occupancy as physical saturation.
+The audit records per-file packet-type counts and warns when the schema exists
+but no `packet_type == 0` rows were found, including an empty packet dataset.
 
 Counts are accumulated across files **before** normalizing. Histogram fractions
 are counts divided by the total entries supplied to that histogram, including
@@ -183,6 +195,16 @@ may sum to less than one. The full denominator and coverage are in `summary.json
 Ratios with zero reference content are undefined (`nan` in CSV), with no
 pseudocounts. No statistical error bands or significance tests are claimed.
 
+One-dimensional ratio panels default to a fixed **0 to 2** display range so
+sparse-denominator extremes do not compress the rest of the curve. Up/down
+triangles at the panel boundary identify values outside this range; the panel
+reports their count. Hollow markers identify bins with fewer than 20 reference
+entries. Those bins are still shown, not rejected, and a zero numerator remains
+zero. Every finite ratio is saved unmodified in the CSV, alongside reference
+counts and display flags; `summary.json` records display statistics. The count
+threshold is a visual aid, not a statistical significance criterion. Configure
+`ratio_ylim` (e.g. `[0, 5]`) and `ratio_min_reference_count` to change this behavior.
+
 Occupancy maps show **fraction of all sample hits**, not Hz or efficiency.
 Ratios divide these fractions at matching electronics addresses. Zero numerator
 hits give ratio zero; no reference hits give an undefined ratio. The report has
@@ -191,6 +213,10 @@ unmapped, and enabled-but-unobserved channels. IO-group maps use hit y/z as the
 readout plane, assuming drift along x; validate that convention for the sample.
 Positions must remain constant to 0.001 cm per address within the sample; ratio
 maps also require compatible positions between samples.
+An unmatched electronics address can occupy a physical position that is populated
+under a different address in the other sample. Thus blue/gray patches on an
+address-matched ratio map do not by themselves establish missing physical coverage;
+compare the individual occupancy maps and validate the address/geometry mapping.
 
 Channel medians use **pooled fine charge histograms**, not averages of per-file
 medians. With the default `[-20, 200, 880]` bins, each middle-order-statistic charge
@@ -214,8 +240,13 @@ rank calculation. Widen `channel_charge_bins` if medians are censored.
   timestamp in a channel/event is nonfinite, that group's timing pairs are skipped
   rather than bridged across the invalid record.
 - Both samples are known to be half field. No lifetime, recombination, live-time,
-  or extra calibration correction is applied. Default charge labels say
-  `FLOW Q units`; set `charge_unit` to `ke-` only after verifying the calibration.
+  or extra calibration correction is applied. Following the user's convention
+  for these productions, stored `Q` is interpreted as **ke- (thousands of
+  electrons)**: `Q = 5` means 5,000 electrons. Both the default and example config
+  use `charge_unit: "ke-"`. This setting changes labels and recorded unit metadata
+  only; it does not rescale charge values or histogram bins. Hit charge, summed
+  event charge, and channel median charge all use ke-; raw ADC remains dataword.
+  If using an older custom config, update its explicit `charge_unit` as well.
 - Spatial ranges default to the shared finite data extent across samples, then
   a second sequential coordinate pass fills histograms. Outliers can stretch
   these ranges: set `spatial_ranges`, e.g. `{"x": [-40, 40]}`, using validated

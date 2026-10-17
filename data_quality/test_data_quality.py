@@ -11,8 +11,8 @@ import numpy as np
 
 from .flow import ADDRESS, event_hits, inspect_file, resolve_samples
 from .metrics import Histogram, Sample, positive_differences, timing
-from .report import channel_ratios
-from .run import DEFAULT_SETTINGS, DEFAULT_HISTOGRAMS, run
+from .report import channel_ratios, draw_ratio, plt
+from .run import DEFAULT_SETTINGS, DEFAULT_HISTOGRAMS, run, load_config
 
 
 def settings(**changes):
@@ -78,6 +78,58 @@ class DataQualityTests(unittest.TestCase):
         hist.add([-1, 0, 1, 2, 3, np.nan])
         self.assertEqual(hist.summary(), dict(total=6, nonfinite=1, underflow=1, overflow=1, in_range=3))
         np.testing.assert_array_equal(hist.counts, [1, 2])
+
+    def test_ratio_extremes_marked_without_modifying_values(self):
+        values = np.array([np.nan, 0., 1., 50., 17000.])
+        original = values.copy()
+        fig, ax = plt.subplots()
+        try:
+            audit = draw_ratio(ax, np.arange(5), values, np.array([0, 30, 80, 1, 2000]), settings(), 'C1')
+            np.testing.assert_equal(values, original)
+            self.assertEqual(ax.get_ylim(), (0., 2.))
+            self.assertEqual(audit, dict(undefined=1, low_reference_count=1,
+                                         below_display=0, above_display=2))
+            drawn = np.concatenate([c.get_offsets() for c in ax.collections])
+            self.assertEqual(len(drawn), 4)
+            np.testing.assert_array_equal(sorted(drawn[:, 1]), [0, 1, 2, 2])
+        finally:
+            plt.close(fig)
+
+    def test_full_sample_glob_spans_dates_but_not_siblings(self):
+        root = self.root/'lt_prc16'
+        selected = []
+        for day in ('2026_02_25', '2026_02_27', '2026_02_28'):
+            directory = root/('Reflow_FSDCube_v3.flow.binary-cosmics-'+day)
+            directory.mkdir(parents=True)
+            path = directory/('Reflow_FSDCube_v3.flow.binary-cosmics-'+day+'_run.FLOW.hdf5')
+            path.touch()
+            selected.append(str(path.resolve()))
+        sibling = self.root/'lt_prc8'
+        sibling.mkdir()
+        (sibling/'unrelated.FLOW.hdf5').touch()
+        pattern = str(root/'Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_*'/'*.FLOW.hdf5')
+        result = resolve_samples([dict(name='feb', files=[pattern])], self.root)
+        self.assertEqual(result[0]['files'], selected)
+
+    def test_invalid_ratio_settings_rejected(self):
+        config = self.root/'bad-settings.json'
+        for key, value in [('ratio_ylim', [0, 0]), ('ratio_ylim', [2, 3]),
+                           ('ratio_min_reference_count', 0)]:
+            config.write_text(json.dumps(dict(samples=[], settings={key: value})))
+            with self.assertRaisesRegex(ValueError, key):
+                load_config(config)
+
+    def test_adc_schema_present_but_no_data_packets(self):
+        path = fixture(self.root/'no-data-packets.h5')
+        with h5py.File(path, 'r+') as f:
+            packets = f['charge/packets/data'][:]
+            packets['packet_type'] = 4
+            f['charge/packets/data'][:] = packets
+        result = self.sample([path])
+        self.assertEqual(result.files[0]['packet_type_counts'], {'4': 3})
+        self.assertEqual(len(result.coverage['adc']), 1)
+        self.assertEqual(result.histograms['adc'].total, 0)
+        self.assertTrue(any('no packet_type=0' in w for w in result.warnings))
 
     def test_pooling_is_invariant_to_file_partition(self):
         first = fixture(self.root/'first.h5')

@@ -4,24 +4,20 @@
       "name": "february",
       "label": "February 2026 (half field)",
       "files": [
-        "/dvs_ro/cfs/cdirs/dunepro/www/data/nd-production/FSDCube/Reflow_FSDCube_v3/run-ndlar-flow/Reflow_FSDCube_v3.flow/FLOW/Feb2026/cold/scan/lt_prc16/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_2/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_27_23_20_02_PST.FLOW.hdf5",
-        "/dvs_ro/cfs/cdirs/dunepro/www/data/nd-production/FSDCube/Reflow_FSDCube_v3/run-ndlar-flow/Reflow_FSDCube_v3.flow/FLOW/Feb2026/cold/scan/lt_prc16/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_2/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_27_23_25_04_PST.FLOW.hdf5",
-        "/dvs_ro/cfs/cdirs/dunepro/www/data/nd-production/FSDCube/Reflow_FSDCube_v3/run-ndlar-flow/Reflow_FSDCube_v3.flow/FLOW/Feb2026/cold/scan/lt_prc16/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_2/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_28_03_20_53_PST.FLOW.hdf5",
-        "/dvs_ro/cfs/cdirs/dunepro/www/data/nd-production/FSDCube/Reflow_FSDCube_v3/run-ndlar-flow/Reflow_FSDCube_v3.flow/FLOW/Feb2026/cold/scan/lt_prc16/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_2/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_28_03_25_54_PST.FLOW.hdf5"
+        "/dvs_ro/cfs/cdirs/dunepro/www/data/nd-production/FSDCube/Reflow_FSDCube_v3/run-ndlar-flow/Reflow_FSDCube_v3.flow/FLOW/Feb2026/cold/scan/lt_prc16/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_*/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_*.FLOW.hdf5"
       ]
     },
     {
       "name": "october",
       "label": "October 2026 (half field, nominal 5 ke-)",
       "files": [
-        "/global/cfs/projectdirs/dune/www/data/FSDCube/Oct2026/halfField_5ke_prc16_processed_flow/flow/binary-nominal_5ke_prc16-2026_10_1/binary-nominal_5ke_prc16-2026_10_15_22_19_35_PDT.hdf5",
-        "/global/cfs/projectdirs/dune/www/data/FSDCube/Oct2026/halfField_5ke_prc16_processed_flow/flow/binary-nominal_5ke_prc16-2026_10_1/binary-nominal_5ke_prc16-2026_10_16_03_42_25_PDT.hdf5"
+        "/global/cfs/projectdirs/dune/www/data/FSDCube/Oct2026/halfField_5ke_prc16_processed_flow/flow/binary-nominal_5ke_prc16-2026_10_*/binary-nominal_5ke_prc16-2026_10_*.hdf5"
       ]
     }
   ],
   "settings": {
     "hits_path": "charge/calib_prompt_hits",
-    "charge_unit": "FLOW Q units",
+    "charge_unit": "ke-",
     "time_field": "ts_pps",
     "chunk_size": 100000,
     "event_batch_size": 256,
@@ -39,6 +35,8 @@
       "event_duration_us": [0, 2000, 200],
       "multiplicity": [0.5, 50.5, 50],
       "delta_us": [0, 100, 200]
-    }
+    },
+    "ratio_ylim": [0, 2],
+    "ratio_min_reference_count": 20
   }
 }

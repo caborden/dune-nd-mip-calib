@@ -14,11 +14,11 @@ import numpy as np
 from .flow import inspect_file, resolve_samples
 from .metrics import DEFAULT_HISTOGRAMS, Sample, edges, fill_projections, spatial_edges
 
-DEFAULT_SETTINGS = dict(hits_path='charge/calib_prompt_hits', charge_unit='FLOW Q units',
+DEFAULT_SETTINGS = dict(hits_path='charge/calib_prompt_hits', charge_unit='ke-',
                         time_field='ts_pps', chunk_size=100000, event_batch_size=256,
                         max_event_links=2000000, adc_max=255,
                         channel_charge_bins=[-20, 200, 880], spatial_bins=120,
-                        spatial_ranges={})
+                        spatial_ranges={}, ratio_ylim=[0, 2], ratio_min_reference_count=20)
 
 
 def load_config(path):
@@ -44,6 +44,13 @@ def load_config(path):
             raise ValueError(f'{key} must be a positive integer')
     if settings['spatial_bins'] > 2000:
         raise ValueError('spatial_bins must be <= 2000 to bound 2D histogram memory')
+    limits = settings['ratio_ylim']
+    if (not isinstance(limits, list) or len(limits) != 2
+            or not np.isfinite(limits).all() or not 0 <= limits[0] < 1 < limits[1]):
+        raise ValueError('ratio_ylim must be [low, high] with 0 <= low < 1 < high')
+    minimum = settings['ratio_min_reference_count']
+    if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
+        raise ValueError('ratio_min_reference_count must be a positive integer')
     if not isinstance(settings['adc_max'], int) or settings['adc_max'] < 1:
         raise ValueError('adc_max must be a positive integer')
     if settings['time_field'] not in ('ts_pps', 't_drift'):
@@ -97,6 +104,8 @@ def run(config_path, output_dir=None, check_inputs=False):
                         'hit_population': 'Every calibrated hit row once per input file; no track/channel/charge cuts.',
                         'event_population': 'Every event with valid forward hit references, including empty events.',
                         'adc_population': 'Every packet_type=0 row; not restricted to hit-linked packets.',
+                        'charge': f'Stored Q values interpreted as {config["settings"]["charge_unit"]}; '
+                                  'no numerical conversion or rescaling applied.',
                         'duration': 'Max-min linked hit timestamp, not configured event-builder window.',
                         'delta_t': 'All adjacent time-sorted hits in each channel/event; no cross-event/file pairs.',
                         'normalization': 'Pooled histogram count divided by total entries, including nonfinite/overflow.',
