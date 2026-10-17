@@ -4,8 +4,11 @@ Compare one or more original FLOW samples without track selection or a merged
 input file. Every file contributes to collective sample accumulators. There are
 no per-file plots. The first sample is the reference for ratio panels.
 
-The example config selects all matching date subdirectories below the February
-`cold/scan/lt_prc16` and October `halfField_5ke_prc16_processed_flow/flow` roots.
+The example config selects all matching February and October filenames directly
+inside the `cold/scan/lt_prc16` and
+`halfField_5ke_prc16_processed_flow/flow` directories, respectively.
+The date strings in the original shell snippets were filename prefixes, not
+subdirectories. No extra date-directory component belongs in either pattern.
 An earlier version listed only the four February and two October filenames shown
 in the initial request; reports made with that version cover only those files.
 Run `--check-inputs` to verify the expanded file counts before submitting a job.
@@ -22,7 +25,7 @@ the local development machine; run the input check below.
 | `flow.py` | Read-only HDF5 access, input deduplication, metadata/schema inspection, and bounded forward event-to-hit reference traversal. |
 | `metrics.py` | Streaming hit/packet/event histograms, per-channel occupancy and binned charge medians, exact integer timing differences, spatial projections. |
 | `report.py` | Collective overlays and ratios, spatial/channel maps, CSV/NPZ tables, HTML report, multipage plot PDF, and audit JSON. |
-| `config.example.json` | Full-sample file patterns across date subdirectories, labels, binning, ratio-display settings, and memory controls. |
+| `config.example.json` | Full-sample file patterns in the two sample directories, labels, binning, ratio-display settings, and memory controls. |
 | `run_nersc.sbatch` | CPU shared-queue job using the existing analysis conda environment and the repository's Slurm launch convention. |
 | `test_data_quality.py` | Synthetic FLOW regression tests, including unequal-size files, references, timing, missing fields, and report generation. |
 | `requirements.txt` | Only NumPy, h5py, and Matplotlib are needed; no h5flow or track-analysis dependencies. |
@@ -77,11 +80,21 @@ module load conda
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate /global/common/software/dune/efield2_rcmanduj/
 python -c 'import numpy, h5py, matplotlib; print("Dependencies available")'
+export HDF5_USE_FILE_LOCKING=FALSE
 
 python -m data_quality.run \
   --config data_quality/config.example.json \
   --check-inputs
 ```
+
+The locking setting addresses the file-lock error observed on these NERSC input
+mounts. Set it before launching Python, and pass it to the batch job below.
+It is appropriate here for completed inputs being read only: no process should
+be modifying the source files. See the
+[HDF5 locking guidance](https://portal.hdfgroup.org/documentation/hdf5/latest/_file_lock.html).
+After pulling this corrected example, use `config.example.json` consistently
+for both commands; the earlier side-chat `config.nersc.json` may still contain
+only six explicit files and is not automatically updated by Git.
 
 This checks all paths and required schemas, prints hit/event counts, optional
 packet fields, reference availability, and CRS tick periods, and writes nothing.
@@ -108,6 +121,7 @@ Replace `YOUR_NERSC_ACCOUNT` with the allocation used for your other jobs:
 ```bash
 mkdir -p "$SCRATCH/fsdcube/data_quality/logs"
 sbatch -A YOUR_NERSC_ACCOUNT \
+  --export=ALL,HDF5_USE_FILE_LOCKING=FALSE \
   --output="$SCRATCH/fsdcube/data_quality/logs/dq-%j.out" \
   data_quality/run_nersc.sbatch \
   data_quality/config.example.json \

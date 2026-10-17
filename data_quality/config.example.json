@@ -4,14 +4,14 @@
       "name": "february",
       "label": "February 2026 (half field)",
       "files": [
-        "/dvs_ro/cfs/cdirs/dunepro/www/data/nd-production/FSDCube/Reflow_FSDCube_v3/run-ndlar-flow/Reflow_FSDCube_v3.flow/FLOW/Feb2026/cold/scan/lt_prc16/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_*/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_*.FLOW.hdf5"
+        "/dvs_ro/cfs/cdirs/dunepro/www/data/nd-production/FSDCube/Reflow_FSDCube_v3/run-ndlar-flow/Reflow_FSDCube_v3.flow/FLOW/Feb2026/cold/scan/lt_prc16/Reflow_FSDCube_v3.flow.binary-cosmics-2026_02_*.FLOW.hdf5"
       ]
     },
     {
       "name": "october",
       "label": "October 2026 (half field, nominal 5 ke-)",
       "files": [
-        "/global/cfs/projectdirs/dune/www/data/FSDCube/Oct2026/halfField_5ke_prc16_processed_flow/flow/binary-nominal_5ke_prc16-2026_10_*/binary-nominal_5ke_prc16-2026_10_*.hdf5"
+        "/global/cfs/projectdirs/dune/www/data/FSDCube/Oct2026/halfField_5ke_prc16_processed_flow/flow/binary-nominal_5ke_prc16-2026_10_*.hdf5"
       ]
     }
   ],
