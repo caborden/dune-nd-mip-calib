@@ -17,12 +17,13 @@ from .run import resolve_target
 ADDRESS = ['io_group', 'io_channel', 'chip_id', 'channel_id']
 
 
-def pixel_deltas(hits, time_field):
+def pixel_deltas(hits, time_field, pair_consumer=None):
     """One nonnegative separation per pixel with exactly two records in this event.
 
     Group BEFORE testing timestamps: invalid times must not turn a three-hit
     pixel into a two-hit pixel. Convert integer scalars to Python int before
     subtraction to avoid float rounding and unsigned overflow.
+    An optional consumer receives each finite-time pair and its separation.
     """
     audit = Counter(hits=len(hits))
     if not len(hits):
@@ -48,10 +49,12 @@ def pixel_deltas(hits, time_field):
         audit['pairs_valid'] += 1
         audit['pairs_zero_delta'] += int(delta == 0)
         audit['pairs_both_selected'] += int(np.all(pair['selected_track_id'] >= 0))
+        if pair_consumer is not None:
+            pair_consumer(pair, delta)
     return np.asarray(deltas, dtype=float), audit
 
 
-def summarize(path, edges, time_field='ts_pps'):
+def summarize(path, edges, time_field='ts_pps', pair_consumer=None, required_fields=()):
     counts = np.zeros(len(edges)-1, dtype=np.int64)
     audit = Counter()
     with h5py.File(path, 'r') as f:
@@ -59,6 +62,7 @@ def summarize(path, edges, time_field='ts_pps'):
             raise ValueError(f'Requires a complete schema-2 selection: {path}')
         dataset = f['events/hits']
         required = set(ADDRESS + [time_field, 'file_id', 'source_event_row', 'selected_track_id'])
+        required.update(required_fields)
         if not required <= set(dataset.dtype.names):
             raise ValueError(f'{path}: missing hit fields {sorted(required-set(dataset.dtype.names))}')
         if dataset.dtype[time_field].kind not in 'iuf':
@@ -85,7 +89,7 @@ def summarize(path, edges, time_field='ts_pps'):
                         np.any(hits['file_id'] != event['file_id']) or
                         np.any(hits['source_event_row'] != event['source_event_row'])):
                     raise ValueError('Event hit range crosses source identity')
-                delta, counters = pixel_deltas(hits, time_field)
+                delta, counters = pixel_deltas(hits, time_field, pair_consumer)
                 audit.update(counters)
                 audit['events'] += 1
                 counts += np.histogram(delta, bins=edges)[0]

@@ -876,3 +876,71 @@ are retained. No data/MC ratio is produced for this data/data comparison.
 `jobs/compare_runs.sbatch ROOT NEW_RUN_ID --comparison-id ID --member ...`
 provides the NERSC wrapper. Comparison outputs require a new run ID; per-sample
 outputs retain the general runner's resume/rerun behavior.
+
+## Two-hit charge distributions
+
+`analysis.two_hit_charge` uses the same event-scoped pixel grouping and sample
+recipe as the combined timing plot above. It reads `events/hits` directly and
+includes track-rejected hits. It does not require rebuilding selections or
+segment tables. It produces:
+
+- `total_charge_by_separation.png/.pdf`: all recipe samples overlaid in two
+  panels, **25 ≤ Δt ≤ 40** and **Δt > 40** CRS ticks, plotting Q₁ + Q₂.
+- `<sample>_charge_breakdown.png/.pdf`: first-hit, second-hit and total-charge
+  curves for each sample, with panels for all finite-time pairs and both timing
+  categories. The all-pairs panel also includes separations below 25 ticks.
+- `data_prc16_mc_charge_overlay.png/.pdf`: the same three panels with prc16 data
+  (solid) and MC (dashed); color identifies first hit, second hit or total.
+- `<sample>_<category>_<component>.csv`: common bin edges, raw count and fraction
+  for each curve. Categories are `all`, `dt25_40`, `dt_gt40`; components are
+  `first`, `second`, `total`. `manifest.json` in the parent run folder contains
+  pair counts, invalid-charge counts and per-component underflow/overflow.
+
+First/second means increasing `ts_pps`, not charge magnitude or stored row order.
+Tied timestamps retain saved row order; these are counted in the timing audit.
+Integer time subtraction is exact before conversion, and there is no rollover
+correction. `--time-field t_drift` changes both ordering and separation together.
+`Q` is used directly, assumed in ke− as in the existing selected-hit charge plots;
+no lifetime or recombination correction is added. Multiplicity is determined
+before any finite-value checks. Nonfinite times exclude the pair from these
+charge categories. If either Q or the sum is nonfinite, all three charge
+histograms omit that pair, while retaining it in the category denominator.
+
+Every curve is divided by the sample's number of finite-time pairs **within that
+category**, without bin-width division. Underflow, overflow and invalid charges
+remain in that denominator. Therefore visible fractions can sum to less than
+one. This makes shape comparisons meaningful despite differing sample sizes;
+it is not an event-rate comparison. The default range is 0–200 ke− with 100 bins,
+shared across components and samples. Negative charges are audited as underflow,
+not clipped to zero. The final bin includes its upper edge.
+
+From the NERSC checkout (the environment path follows the existing project jobs):
+
+```bash
+module load conda
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate /global/common/software/dune/efield2_rcmanduj/
+
+python -u -m analysis.two_hit_charge \
+  --config configs/analyses/hit_timing_prc_comparison.json \
+  --root "$SCRATCH/fsdcube" \
+  --run-id two-hit-charge-001 \
+  --bins 100 --charge-min 0 --charge-max 200
+
+OUT="$SCRATCH/fsdcube/comparisons/reflow-v3-feb2026-prc2_vs_prc8_vs_prc16_vs_fsdcube-sim-v1-prc256/analysis/two-hit-charge-001"
+ls "$OUT/two_hit_charge/"*.png
+```
+
+The existing prc2, prc8, prc16 and MC sample registries must be present under
+`$SCRATCH/fsdcube/samples/`, with complete schema-2 selections and matching CRS
+tick periods. The combined recipe resolves them directly; no new comparison
+preparation is required. Use `--root` to point to a different output tree if
+needed. This is an event-streaming, single-pass analysis with no fitting or
+bootstrap. Choose a fresh `--run-id` for every rerun; existing runs are refused.
+For a wider charge window, for example, use `--run-id two-hit-charge-wide-001
+--charge-max 400 --bins 200`. The Δt > 40 category has **no upper time cutoff**,
+including pairs outside the original timing plot's displayed 200-tick range.
+
+For a paired comparison recipe instead, pass `--overlay-data data`. For the
+combined recipe the default is `--overlay-data data_prc16`. The command writes
+only new analysis outputs and never modifies input selections.
