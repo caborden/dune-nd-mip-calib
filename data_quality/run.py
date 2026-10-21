@@ -1,5 +1,6 @@
 """CLI: python -m data_quality.run --config ... --output-dir ..."""
 import argparse
+from analysis.exports import add_export_arguments
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -83,7 +84,7 @@ def preflight(config):
     return inventories
 
 
-def run(config_path, output_dir=None, check_inputs=False):
+def run(config_path, output_dir=None, check_inputs=False, write_csv=False, write_png=False):
     config = load_config(config_path)
     inventories = preflight(config)
     if check_inputs:
@@ -95,7 +96,7 @@ def run(config_path, output_dir=None, check_inputs=False):
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
-    manifest = dict(status='running', schema_version=1,
+    manifest = dict(exports=dict(write_csv=write_csv, write_png=write_png), status='running', schema_version=1,
                     created_utc=datetime.now(timezone.utc).isoformat(), config=config,
                     python=platform.python_version(), numpy=np.__version__, h5py=h5py.__version__,
                     source_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest()
@@ -137,7 +138,7 @@ def run(config_path, output_dir=None, check_inputs=False):
                 if (stat.st_size, stat.st_mtime_ns) != (info['size_bytes'], info['mtime_ns']):
                     raise RuntimeError(f'Input changed during analysis: {info["path"]}')
         print('Writing collective plots and report', flush=True)
-        render(samples, axes, output, manifest)
+        render(samples, axes, output, manifest, write_csv=write_csv, write_png=write_png)
         manifest.update(status='complete', elapsed_seconds=time.monotonic()-started)
         write_json(output/'summary.json', manifest)
     except Exception as exc:
@@ -154,11 +155,12 @@ def main():
     parser.add_argument('--config', required=True, type=Path)
     parser.add_argument('--output-dir', type=Path, help='New output directory; existing directories are refused')
     parser.add_argument('--check-inputs', action='store_true', help='Inspect paths/schemas only; write nothing')
+    add_export_arguments(parser)
     args = parser.parse_args()
     if args.output_dir is None and not args.check_inputs:
         parser.error('--output-dir is required unless --check-inputs is used')
     try:
-        run(args.config, args.output_dir, args.check_inputs)
+        run(args.config, args.output_dir, args.check_inputs, write_csv=args.write_csv, write_png=args.write_png)
     except (ValueError, KeyError, OSError, RuntimeError) as exc:
         print(f'Data quality failed: {exc}', file=sys.stderr)
         return 1

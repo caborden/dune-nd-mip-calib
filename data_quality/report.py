@@ -27,7 +27,9 @@ def write_json(path, value):
     path.write_text(json.dumps(json_value(value), indent=2, allow_nan=False) + '\n')
 
 
-def write_csv(path, rows, fields=None):
+def write_csv_rows(path, rows, fields=None, enabled=False):
+    if not enabled:
+        return
     rows = list(rows)
     if fields is None:
         fields = list(rows[0]) if rows else []
@@ -101,16 +103,19 @@ def sample_summary(sample):
                  for name, (numerator, denominator) in fraction_pairs.items()}
     return dict(name=sample.name, label=sample.label, audit=dict(sample.audit), fractions=fractions,
                 observed_channels=len(sample.channels), histograms={
-                    k: dict(v.summary(), files_with_required_fields=len(sample.coverage[k]))
+                    k: dict(v.summary(), edges=v.edges.tolist(), counts=v.counts.tolist(), files_with_required_fields=len(sample.coverage[k]))
                     for k, v in sample.histograms.items()},
                 projections={k: {n: v for n, v in p.items() if n != 'counts'}
                              for k, p in sample.projections.items()},
                 files=sample.files, warnings=warnings)
 
 
-def render(samples, axes, output, manifest):
+def render(samples, axes, output, manifest, write_csv=False, write_png=False):
+    from functools import partial
+    export_csv = partial(write_csv_rows, enabled=write_csv)
     plots, tables = output/'plots', output/'tables'
-    plots.mkdir()
+    if write_png:
+        plots.mkdir()
     tables.mkdir()
     figures = []
     summaries = [sample_summary(s) for s in samples]
@@ -118,7 +123,8 @@ def render(samples, axes, output, manifest):
     reference = samples[0]
     with PdfPages(output/'report.pdf') as pdf:
         def save(fig, name, caption):
-            fig.savefig(plots/(name+'.png'), dpi=140, bbox_inches='tight')
+            if write_png:
+                fig.savefig(plots/(name+'.png'), dpi=140, bbox_inches='tight')
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
             figures.append((name, caption))
@@ -144,7 +150,7 @@ def render(samples, axes, output, manifest):
                 if sample is not reference and hist.total:
                     display_audit[sample.name] = draw_ratio(lower, centers, values, ref.counts,
                                                           sample.settings, color)
-                write_csv(tables/f'{sample.name}_{key}.csv', [
+                export_csv(tables/f'{sample.name}_{key}.csv', [
                     dict(low=lo, high=hi, count=int(count), fraction=float(frac),
                          ratio_to_reference=float(rat), reference_count=int(ref_count),
                          ratio_low_reference_count=bool(ref_count < sample.settings['ratio_min_reference_count']),
@@ -205,7 +211,7 @@ def render(samples, axes, output, manifest):
 
         channel_tables = [dict((tuple(row[n] for n in ADDRESS), row) for row in s.channel_rows()) for s in samples]
         for sample, rows in zip(samples, channel_tables):
-            write_csv(tables/f'{sample.name}_channels.csv', rows.values(), fields=list(ADDRESS)+[
+            export_csv(tables/f'{sample.name}_channels.csv', rows.values(), fields=list(ADDRESS)+[
                 'count', 'hit_fraction', 'y', 'z', 'position_stable', 'median_charge', 'median_status',
                 'finite_charge', 'charge_underflow', 'charge_overflow'])
         groups = sorted({key[0] for rows in channel_tables for key in rows})
@@ -237,7 +243,7 @@ def render(samples, axes, output, manifest):
 
         for sample, table in zip(samples[1:], channel_tables[1:]):
             rows = channel_ratios(channel_tables[0], table)
-            write_csv(tables/f'{sample.name}_over_{reference.name}_channels.csv', rows)
+            export_csv(tables/f'{sample.name}_over_{reference.name}_channels.csv', rows)
             for group in groups:
                 selected = [r for r in rows if r['io_group'] == group and r['position_compatible']]
                 valid = [r for r in selected if np.isfinite(r['ratio'])]
@@ -281,7 +287,7 @@ def render(samples, axes, output, manifest):
                                                      'files_with_required_fields'))+'</tr>'
     histogram_table += '</table>'
     cards = ''.join(f'<section><h2>{html.escape(name)}</h2><img src="plots/{name}.png" alt="{name}">'
-                    f'<p>{html.escape(caption)}</p></section>' for name, caption in figures)
+                    f'<p>{html.escape(caption)}</p></section>' for name, caption in figures) if write_png else '<p>See report.pdf for plots; use --write-png for inline images.</p>'
     (output/'report.html').write_text('''<!doctype html><html lang="en"><meta charset="utf-8">
 <title>Inclusive FLOW data quality</title><style>
 body{font:16px system-ui;max-width:1200px;margin:30px auto;padding:0 20px;color:#20252b}

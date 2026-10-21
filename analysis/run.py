@@ -13,18 +13,19 @@ from .hit_density import (plot_segments as plot_hit_density, make_settings as ma
 from .selection_hits import analyze as analyze_hits, make_settings as hit_settings, SETTING_KEYS as HIT_KEYS
 from .segments import build_segments
 from .run_state import components, upgrade_legacy, adopt_imported, start_history, publish
+from .exports import add_export_arguments
 from .io import (read_json, write_json, fingerprint, file_identity, code_hashes,
                  runtime_versions, safe_name)
 
 # Register future modules here, with explicit shared-table dependencies.
 MODULES = {
-    'selection_hits': dict(dependencies=[], code=['analysis/selection_hits.py'],
+    'selection_hits': dict(dependencies=[], code=['analysis/selection_hits.py', 'analysis/exports.py'],
                            settings=HIT_KEYS, output='selection_hits'),
     'segments': dict(dependencies=[], code=['analysis/segments.py', 'pixel_dqdx/segments.py'],
                      settings=SEGMENT_KEYS, output='shared/segments.hdf5'),
-    'dqdx': dict(dependencies=['segments'], code=['analysis/dqdx.py', 'pixel_dqdx/dqdx.py'],
+    'dqdx': dict(dependencies=['segments'], code=['analysis/dqdx.py', 'analysis/exports.py', 'pixel_dqdx/dqdx.py'],
                  settings={'bins', 'hist_range', 'fit_range', 'min_fit_entries'}, output='dqdx'),
-    'hit_density': dict(dependencies=['segments'], code=['analysis/hit_density.py'],
+    'hit_density': dict(dependencies=['segments'], code=['analysis/hit_density.py', 'analysis/exports.py'],
                         settings=HIT_DENSITY_KEYS, output='hit_density'),
 }
 
@@ -81,7 +82,7 @@ def artifact_identities(path):
     return [file_identity(p) for p in files]
 
 
-def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
+def run(config_path, root, run_id, modules=None, resume=False, rerun=None, write_csv=False, write_png=False):
     config = read_json(config_path)
     unexpected = set(config) - {'target', 'segments', 'modules', 'run_modules'}
     if unexpected:
@@ -106,6 +107,10 @@ def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
         'dqdx': {key: settings[key] for key in MODULES['dqdx']['settings']},
         'hit_density': density_settings,
     }
+    exports = dict(write_csv=write_csv, write_png=write_png)
+    for name in stage_settings:
+        if name != 'segments':
+            stage_settings[name] = dict(stage_settings[name], exports=exports)
     requested = modules if modules is not None else config.get('run_modules', ['dqdx'])
     if requested == ['all']:
         requested = list(MODULES)
@@ -115,7 +120,7 @@ def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
     order = dependency_order(requested)
     resume = resume or bool(forced)
     inputs = {kind: file_identity(path) for kind, _, path in samples}
-    resolved = dict(target=config['target'], inputs=inputs, settings=settings,
+    resolved = dict(exports=exports, target=config['target'], inputs=inputs, settings=settings,
                     module_settings={'hit_density': density_settings, 'selection_hits': selection_hit_settings})
     directory = target_dir/'analysis'/safe_name(run_id)
     manifest_path = directory/'manifest.json'
@@ -184,19 +189,19 @@ def run(config_path, root, run_id, modules=None, resume=False, rerun=None):
             print(f'Run {name}: {destination}', flush=True)
             try:
                 if name == 'selection_hits':
-                    analyze_hits(samples, temporary, selection_hit_settings)
+                    analyze_hits(samples, temporary, selection_hit_settings, **exports)
                     ready = temporary
                 elif name == 'segments':
                     build_segments(samples, temporary/'segments.hdf5', stage_settings['segments'])
                     ready = temporary/'segments.hdf5'
                 elif name == 'dqdx':
-                    plot_segments(directory/'shared/segments.hdf5', temporary, settings)
+                    plot_segments(directory/'shared/segments.hdf5', temporary, settings, **exports)
                     ready = temporary
                     # Preserve the old flat-layout segments path when refreshing imported plots.
                     if (destination/'segments.hdf5').is_symlink():
                         (temporary/'segments.hdf5').symlink_to('../shared/segments.hdf5')
                 elif name == 'hit_density':
-                    plot_hit_density(directory/'shared/segments.hdf5', temporary, density_settings)
+                    plot_hit_density(directory/'shared/segments.hdf5', temporary, density_settings, **exports)
                     ready = temporary
                 if inputs != {kind: file_identity(path) for kind, _, path in samples}:
                     raise ValueError('Input changed during the run')
@@ -252,6 +257,7 @@ def main():
     parser.add_argument('--resume', action='store_true', help='reuse completed stages and add missing modules')
     parser.add_argument('--rerun', nargs='+', choices=[*MODULES, 'all'],
                         help='refresh selected stages in this run; implies --resume; old outputs go to .history/')
+    add_export_arguments(parser)
     args = vars(parser.parse_args())
     args['config_path'] = args.pop('config')
     print(f'Complete: {run(**args)}')

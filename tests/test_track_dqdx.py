@@ -51,7 +51,7 @@ class DqdxTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 selector.run(str(fixture.source),str(fixture.output),False)
             output_dir=fixture.root/'analysis'
-            manifest = analyze(fixture.output,output_dir,mc=fixture.output,face_cuts="none")
+            manifest = analyze(fixture.output,output_dir,mc=fixture.output,face_cuts="none", write_csv=True, write_png=True)
             self.assertEqual(manifest['status'],'complete')
             self.assertEqual(len(manifest['samples']),2)
             self.assertTrue((output_dir/'data_mc_dqdx.png').exists())
@@ -63,7 +63,7 @@ class DqdxTests(unittest.TestCase):
                 np.testing.assert_allclose(segments['dq'],segments['nhits'])
                 self.assertEqual(len(f['samples/0/sources']),1)
             with self.assertRaises(FileExistsError):
-                analyze(fixture.output,output_dir)
+                analyze(fixture.output,output_dir, write_csv=True, write_png=True)
         finally:
             fixture.tearDown()
 
@@ -77,7 +77,7 @@ class DqdxTests(unittest.TestCase):
                 selector.run(str(fixture.source),str(fixture.output),False)
             mc_dir = fixture.root/'mc_only'
             command = [sys.executable,str(Path(__file__).resolve().parents[1]/'analyze_track_dqdx.py'),
-                       '--mc',str(fixture.output),'--output-dir',str(mc_dir),'--face-cuts','none']
+                       '--write-csv','--write-png','--mc',str(fixture.output),'--output-dir',str(mc_dir),'--face-cuts','none']
             completed = subprocess.run(command,capture_output=True,text=True)
             self.assertEqual(completed.returncode,0,completed.stderr)
             self.assertIn('FSD Cube Simulation Fit',completed.stdout)
@@ -91,7 +91,7 @@ class DqdxTests(unittest.TestCase):
             self.assertFalse((mc_dir/'data_dqdx.png').exists())
             self.assertFalse((mc_dir/'data_mc_dqdx.png').exists())
             data_dir = fixture.root/'data_only'
-            analyze(fixture.output,data_dir,face_cuts='none')
+            analyze(fixture.output,data_dir,face_cuts='none', write_csv=True, write_png=True)
             with h5py.File(mc_dir/'segments.hdf5') as mc, h5py.File(data_dir/'segments.hdf5') as data:
                 self.assertNotIn('samples/0',mc)
                 self.assertEqual(mc['samples/1'].attrs['sample_kind'],'mc')
@@ -107,7 +107,7 @@ class DqdxTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root)/'unused'
             with self.assertRaisesRegex(ValueError,'at least one'):
-                analyze(output_dir=output)
+                analyze(output_dir=output, write_csv=True, write_png=True)
             command = [sys.executable,str(Path(__file__).resolve().parents[1]/'analyze_track_dqdx.py'),
                        '--output-dir',str(output)]
             completed = subprocess.run(command,capture_output=True,text=True)
@@ -125,14 +125,14 @@ class DqdxTests(unittest.TestCase):
                 selector.run(str(fixture.source),str(fixture.output),False)
             geometry={'groups':[{'name':'cube','io_groups':[1],
                                  'bounds':{'x':[-1,101],'y':[-1,250],'z':[-1,11]}}]}
-            result=analyze(fixture.output,fixture.root/'fid',geometry=geometry,require_through_going=True)
+            result=analyze(fixture.output,fixture.root/'fid',geometry=geometry,require_through_going=True, write_csv=True, write_png=True)
             self.assertGreater(result['samples'][0]['audit']['segments'],0)
             with h5py.File(fixture.output,'r+') as f:
                 event=f['events/data'][0]
                 event['file_id']=5
                 f['events/data'][0]=event
             with self.assertRaisesRegex(ValueError,'crosses'):
-                analyze(fixture.output,fixture.root/'bad')
+                analyze(fixture.output,fixture.root/'bad', write_csv=True, write_png=True)
             saved=json.loads((fixture.root/'bad/analysis.json').read_text())
             self.assertEqual(saved['status'],'failed')
         finally:
@@ -153,7 +153,7 @@ class DqdxTests(unittest.TestCase):
                 bounds,reason=automatic_bounds(f,0,1.)
                 self.assertIsNone(bounds)
                 self.assertIn('degenerate',reason)
-            result=analyze(fixture.output,fixture.root/'fallback')
+            result=analyze(fixture.output,fixture.root/'fallback', write_csv=True, write_png=True)
             self.assertGreater(result['samples'][0]['audit']['segments'],0)
         finally:
             fixture.tearDown()
@@ -165,7 +165,7 @@ class DqdxTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Invalid physical bounds'):
             groups_for(hits,0,geometry,'io-group')
         with self.assertRaisesRegex(ValueError,'requires --geometry-json'):
-            analyze('unused','unused',require_through_going=True)
+            analyze('unused','unused',require_through_going=True, write_csv=True, write_png=True)
 
 
 if __name__ == '__main__':

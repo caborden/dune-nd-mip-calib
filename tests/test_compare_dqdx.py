@@ -38,6 +38,19 @@ class DqdxOverlayTests(unittest.TestCase):
                        source_hashes=code_hashes()))
             self.members.append((label, directory))
 
+    def test_json_histogram_without_csv(self):
+        for label, directory in self.members:
+            before = load_member(label, directory)
+            report = read_json(directory/'analysis.json')
+            report['fits'][0]['histogram'] = dict(edges=before['edges'].tolist(), counts=before['counts'].tolist())
+            write_json(directory/'analysis.json', report)
+            (directory/'data_dqdx_histogram.csv').unlink()
+            after = load_member(label, directory)
+            np.testing.assert_array_equal(after['counts'], before['counts'])
+        output = compare(self.root, self.members, 'json-only', write_png=True, write_csv=True)
+        self.assertTrue((output/'dqdx_overlay/dqdx_prc_overlay.png').exists())
+        self.assertEqual(len(list((output/'dqdx_overlay').glob('*.csv'))), 3)
+
     def test_real_render_normalization_and_saved_fit_preservation(self):
         # No optimizer should run: legend and manifest must use the saved data fits.
         with patch('scipy.optimize.curve_fit', side_effect=AssertionError('Unexpected refit')):

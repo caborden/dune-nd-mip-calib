@@ -11,6 +11,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .exports import add_export_arguments, figure_extensions, save_csv
 from .io import code_hashes, file_identity, read_json, safe_name, write_json
 from .run import resolve_target
 
@@ -137,7 +138,7 @@ def resolve_inputs(root, config, data_label):
     return target, inputs
 
 
-def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='ts_pps', data_label='Data'):
+def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='ts_pps', data_label='Data', write_csv=False, write_png=False):
     if bins < 1 or not np.isfinite(max_delta_ticks) or max_delta_ticks <= 0:
         raise ValueError('Require positive bin count and maximum time difference')
     if time_field not in {'ts_pps', 't_drift'}:
@@ -150,14 +151,14 @@ def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='t
     directory.mkdir(parents=True, exist_ok=False)
     output = directory/'hit_time_difference'
     output.mkdir()
-    settings = dict(time_field=time_field, edges_ticks=edges.tolist(),
+    settings = dict(write_csv=write_csv, write_png=write_png, time_field=time_field, edges_ticks=edges.tolist(),
                     hit_view='all recorded hits in saved events; includes track-rejected hits',
                     pixel_key=['file_id', 'source_event_row', *ADDRESS], multiplicity=2,
                     delta='absolute difference; no rollover correction',
                     normalization='bin count / all exactly-two-hit pixel/event instances; includes out-of-range and invalid-time instances in denominator; no bin-width division',
                     population='only events with at least one accepted track are present in selections')
     manifest = dict(status='running', created_utc=datetime.now(timezone.utc).isoformat(),
-                    inputs=identities, settings=settings, source_hashes=code_hashes(['analysis/hit_time_difference.py']))
+                    inputs=identities, settings=settings, source_hashes=code_hashes(['analysis/exports.py', 'analysis/hit_time_difference.py']))
     write_json(directory/'config.json', dict(recipe=config, settings=settings, data_label=data_label))
     write_json(directory/'manifest.json', manifest)
     start = time.monotonic()
@@ -181,7 +182,7 @@ def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='t
                 ax.stairs(fraction, edges, color=color, linewidth=1.4,
                           linestyle='--' if kind == 'mc' else '-',
                           label=f'{label}: {n:,} instances; {overflow:,} above range' if n else f'{label}: no two-hit instances')
-                np.savetxt(output/f'{key}_delta_t.csv', np.column_stack([edges[:-1], edges[1:], counts, fraction]),
+                save_csv(write_csv, output/f'{key}_delta_t.csv', np.column_stack([edges[:-1], edges[1:], counts, fraction]),
                            delimiter=',', header='bin_low_ticks,bin_high_ticks,count,fraction', comments='')
                 print(f'{label}: {sample["audit"]}', flush=True)
             ax.set(title='Time separation in pixels with exactly two hits', xlabel='Hit time separation |Δt| [CRS ticks]',
@@ -191,14 +192,15 @@ def run(config_path, root, run_id, bins=200, max_delta_ticks=200., time_field='t
             fig.text(.5, .02, 'Bin count / all two-hit pixel/event instances, including those outside the displayed range; no bin-width division.',
                      ha='center', fontsize=8)
             fig.tight_layout(rect=(0, .06, 1, 1))
-            for ext in ('png', 'pdf'):
+            for ext in figure_extensions(write_png):
                 fig.savefig(output/f'hit_time_difference.{ext}', dpi=180)
         finally:
             plt.close(fig)
         if identities != {key: file_identity(path) for key, _, path, _ in inputs}:
             raise ValueError('Input changed during analysis')
         manifest.update(status='complete', elapsed_seconds=time.monotonic()-start,
-                        samples={kind: {key: value for key, value in sample.items() if key != 'counts'}
+                        samples={kind: {key: value.tolist() if key == 'counts' else value
+                                        for key, value in sample.items()}
                                  for kind, sample in samples.items()})
     except Exception as exc:
         manifest.update(status='failed', error=str(exc))
@@ -217,6 +219,7 @@ def main():
     parser.add_argument('--max-delta-ticks', type=float, default=200.)
     parser.add_argument('--time-field', choices=['ts_pps', 't_drift'], default='ts_pps')
     parser.add_argument('--data-label', default='Data')
+    add_export_arguments(parser)
     args = vars(parser.parse_args())
     args['config_path'] = args.pop('config')
     print('Complete:', run(**args))

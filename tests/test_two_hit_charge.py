@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 
 from analysis.io import read_json, write_json
-from analysis.two_hit_charge import run, summarize
+from analysis.two_hit_charge import run, summarize, histogram_fwhm
 
 DTYPE = [(name, 'i8') for name in ['io_group', 'io_channel', 'chip_id', 'channel_id',
                                   'file_id', 'source_event_row', 'selected_track_id']]
@@ -35,6 +35,13 @@ def fixture(path):
 
 
 class TwoHitChargeTests(unittest.TestCase):
+    def test_fwhm_interpolation_and_clipping(self):
+        self.assertAlmostEqual(histogram_fwhm([0, 2, 6, 2, 0], np.arange(6.)), 1.5)
+        self.assertAlmostEqual(histogram_fwhm([0, 4, 4, 0], np.arange(5.)), 2.)
+        self.assertIsNone(histogram_fwhm([4, 2, 0], np.arange(4.)))
+        self.assertIsNone(histogram_fwhm([0, 2, 4], np.arange(4.)))
+        self.assertIsNone(histogram_fwhm([0, 0], np.arange(3.)))
+
     def test_boundaries_order_and_normalization(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)/'selection.hdf5'
@@ -55,6 +62,7 @@ class TwoHitChargeTests(unittest.TestCase):
             self.assertEqual(tail['overflow']['second'], 1)
             self.assertEqual(tail['overflow']['total'], 1)
             self.assertEqual(tail['counts']['total'].sum(), 1)
+            self.assertEqual(tail['statistics']['total']['mean'], (34+208)/2)
             # Histogram final edge is inclusive.
             short = summarize(path, np.array([0., 10., 20.]))['categories']['dt25_40']
             np.testing.assert_array_equal(short['counts']['total'], [0, 2])
@@ -71,7 +79,12 @@ class TwoHitChargeTests(unittest.TestCase):
                 refs[key] = dict(id=key, kind=kind, label=key)
             config = root/'recipe.json'
             write_json(config, dict(target=dict(kind='comparison', id='test'), samples=refs))
-            directory = run(config, root, 'test', bins=20)
+            for name, flags, expected in [('default', {}, {'.pdf'}),
+                    ('png', {'write_png': True}, {'.pdf', '.png'}),
+                    ('csv', {'write_csv': True}, {'.pdf', '.csv'})]:
+                directory = run(config, root, name, bins=20, **flags)
+                self.assertEqual({p.suffix for p in (directory/'two_hit_charge').iterdir()}, expected)
+            directory = run(config, root, 'test', bins=20, write_csv=True, write_png=True)
             manifest = read_json(directory/'manifest.json')
             self.assertEqual(manifest['status'], 'complete')
             cat = manifest['samples']['data_prc16']['categories']['dt_gt40']
@@ -83,9 +96,9 @@ class TwoHitChargeTests(unittest.TestCase):
                 for ext in ['png', 'pdf']:
                     self.assertGreater((directory/'two_hit_charge'/f'{stem}.{ext}').stat().st_size, 1000)
             with self.assertRaises(FileExistsError):
-                run(config, root, 'test')
+                run(config, root, 'test', write_csv=True, write_png=True)
             with self.assertRaisesRegex(ValueError, 'Overlay data key'):
-                run(config, root, 'bad', overlay_data='missing')
+                run(config, root, 'bad', overlay_data='missing', write_csv=True, write_png=True)
 
     def test_missing_charge_and_nonfinite_times(self):
         with tempfile.TemporaryDirectory() as temp:

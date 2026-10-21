@@ -256,7 +256,7 @@ class DataQualityTests(unittest.TestCase):
         output = self.root/'failure'
         with patch('data_quality.run.Sample.process', side_effect=RuntimeError('test failure')):
             with self.assertRaisesRegex(RuntimeError, 'test failure'):
-                run(config, output)
+                run(config, output, write_csv=True, write_png=True)
         summary = json.loads((output/'summary.json').read_text())
         self.assertEqual(summary['status'], 'failed')
         self.assertIn('test failure', summary['error'])
@@ -268,7 +268,13 @@ class DataQualityTests(unittest.TestCase):
         config = self.root/'empty.json'
         config.write_text(json.dumps(dict(samples=[dict(name='empty', files=[str(path)])])))
         output = self.root/'empty-report'
-        run(config, output)
+        default = self.root/'default-report'
+        run(config, default)
+        self.assertTrue((default/'report.pdf').exists())
+        self.assertFalse(list(default.rglob('*.png')))
+        self.assertFalse(list(default.rglob('*.csv')))
+        self.assertNotIn('<img', (default/'report.html').read_text())
+        run(config, output, write_csv=True, write_png=True)
         summary = json.loads((output/'summary.json').read_text())
         self.assertEqual(summary['status'], 'complete')
         self.assertEqual(summary['samples'][0]['audit']['hit_rows'] if 'hit_rows' in summary['samples'][0]['audit'] else 0, 0)
@@ -291,10 +297,16 @@ class DataQualityTests(unittest.TestCase):
         config.write_text(json.dumps(dict(samples=[dict(name='feb', files=[str(a)]),
                                                    dict(name='oct', files=[str(b)])])))
         output = self.root/'report'
-        inventory = run(config, output, check_inputs=True)
+        inventory = run(config, output, check_inputs=True, write_csv=True, write_png=True)
         self.assertFalse(output.exists())
         self.assertEqual(len(inventory), 2)
-        run(config, output)
+        default = self.root/'default-report'
+        run(config, default)
+        self.assertTrue((default/'report.pdf').exists())
+        self.assertFalse(list(default.rglob('*.png')))
+        self.assertFalse(list(default.rglob('*.csv')))
+        self.assertNotIn('<img', (default/'report.html').read_text())
+        run(config, output, write_csv=True, write_png=True)
         summary = json.loads((output/'summary.json').read_text())
         self.assertEqual(summary['status'], 'complete')
         for name in ('report.html', 'report.pdf', 'plots/charge.png', 'tables/feb_channels.csv'):
@@ -302,7 +314,7 @@ class DataQualityTests(unittest.TestCase):
         rows = np.genfromtxt(output/'tables/oct_charge.csv', delimiter=',', names=True)
         np.testing.assert_allclose(rows['ratio_to_reference'][np.isfinite(rows['ratio_to_reference'])], 1)
         with self.assertRaises(FileExistsError):
-            run(config, output)
+            run(config, output, write_csv=True, write_png=True)
 
 
 if __name__ == '__main__':

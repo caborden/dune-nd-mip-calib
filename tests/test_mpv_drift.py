@@ -79,7 +79,7 @@ class MPVDriftTests(unittest.TestCase):
             with h5py.File(second, 'r+') as f:
                 f['samples/0'].attrs['input_file'] = '/selection/second'
             directory = run(self.root, [('prc2', self.path), ('prc8', second)], self.path,
-                            'test', repetitions=4)
+                            'test', repetitions=4, write_csv=True, write_png=True)
             report = read_json(directory/'manifest.json')
             self.assertEqual(report['status'], 'complete')
             output = directory/'mpv_drift'
@@ -91,13 +91,13 @@ class MPVDriftTests(unittest.TestCase):
             self.assertGreater((output/'mpv_drift.png').stat().st_size, 1000)
             with self.assertRaisesRegex(ValueError, 'Existing run'):
                 run(self.root, [('prc2', self.path), ('prc8', second)], self.path,
-                    'test', repetitions=5, resume=True)
+                    'test', repetitions=5, resume=True, write_csv=True, write_png=True)
 
     def test_tick_period_mismatch_rejected(self):
         with h5py.File(self.path, 'r+') as f:
             f['samples/1/sources/0/metadata/run_info'].attrs['crs_ticks'] = .2
         with self.assertRaisesRegex(ValueError, 'tick period differs'):
-            run(self.root, [('prc2', self.path)], self.path, 'bad', repetitions=2)
+            run(self.root, [('prc2', self.path)], self.path, 'bad', repetitions=2, write_csv=True, write_png=True)
         self.assertFalse((self.root/'comparisons').exists())
 
 

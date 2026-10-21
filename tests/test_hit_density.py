@@ -98,7 +98,7 @@ class HitDensityTests(unittest.TestCase):
         self.write(rows[2:], (1,))
         mc, _ = summarize(self.path, settings)
         self.assertEqual(mc[0], before)
-        result = plot_segments(self.path, self.root/'mc', settings)
+        result = plot_segments(self.path, self.root/'mc', settings, write_csv=True, write_png=True)
         self.assertEqual(result['status'], 'complete')
         self.assertTrue((self.root/'mc/mc_hit_density.pdf').exists())
         self.assertTrue((self.root/'mc/mc_hit_density.csv').exists())
@@ -114,7 +114,7 @@ class HitDensityTests(unittest.TestCase):
         self.write([(0,0,0,0,5,n,3,b'io1') for n in [2,2,2,10]] +
                    [(1,0,0,0,5,n,3,b'io1') for n in [4,4,8]] +
                    [(0,0,0,0,5000,6,3,b'io1'), (1,0,0,0,5001,99,3,b'io1')], (0,1))
-        result = plot_segments(self.path, self.root/'paired', make_settings(uncertainty='none'))
+        result = plot_segments(self.path, self.root/'paired', make_settings(uncertainty='none'), write_csv=True, write_png=True)
         data, mc = result['samples']
         self.assertEqual(data['bins'][0]['hit_count_distribution'],
                          dict(nhits=[2,10], counts=[3,1], mean_nhits=4., mode_nhits=[2]))
@@ -128,7 +128,7 @@ class HitDensityTests(unittest.TestCase):
 
     def test_empty_sample_invalid_dx_and_ratio_zero_handling(self):
         self.write([], (0,1))
-        result = plot_segments(self.path, self.root/'empty', make_settings(bootstrap_samples=20))
+        result = plot_segments(self.path, self.root/'empty', make_settings(bootstrap_samples=20), write_csv=True, write_png=True)
         self.assertTrue(all(b['mean'] is None for s in result['samples'] for b in s['bins']))
         self.assertTrue((self.root/'empty/data_mc_hit_density_ratio.png').exists())
         self.write([(0,0,0,0,5,4,0,b'io1')])
@@ -200,7 +200,7 @@ class HitDensityTests(unittest.TestCase):
         self.assertEqual(sample['audit']['track_selection_excluded_segments'], 2)
         self.assertEqual(sample['bins'][0]['mean'], 3)
         self.assertEqual(sample['bins'][0]['mpv'], 2)
-        output = plot_segments(self.path, self.root/'top-bottom', settings)
+        output = plot_segments(self.path, self.root/'top-bottom', settings, write_csv=True, write_png=True)
         self.assertEqual(output['status'], 'complete')
         self.assertTrue((self.root/'top-bottom/data_top_bottom_tracks.csv').exists())
         with h5py.File(self.path, 'r+') as f:

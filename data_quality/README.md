@@ -315,3 +315,11 @@ Tests create tiny temporary FLOW fixtures, check pooling independently of file
 partition, exercise IDs distinct from row numbers and non-contiguous reference
 regions, preserve uint64 timing precision, and render a complete report. They
 do not validate the physics calibration or actual NERSC input contents.
+
+### Optional exports
+
+The default plot output is `report.pdf`; `--write-png` (alias `-write-png`) enables
+PNG files and inline images in `report.html`. Use `--write-csv` for the CSV tables
+listed above. Both flags are disabled by default. The HTML audit summary, JSON
+records and NPZ spatial histograms remain available. Existing output directories
+are still refused; choose a new directory to regenerate the report.

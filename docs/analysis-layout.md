@@ -1,5 +1,29 @@
 # Sample-based FSD-cube workflow
 
+## Output formats
+
+All analysis entry points now save **PDF figures by default**. Add `--write-png`
+(or `-write-png`) for PNG copies and `--write-csv` for numerical CSV exports;
+both flags default to false and are independent. This applies to
+`analysis.run` (dQ/dx, hit density, selected-hit diagnostics),
+`analyze_track_dqdx.py`, `analysis.hit_density`, `analysis.hit_time_difference`,
+`analysis.two_hit_charge`, `analysis.mpv_drift`, `analysis.compare_dqdx`,
+`analysis.compare_runs`, and `data_quality.run`. Descriptions of PNG/CSV products
+below refer to these optional exports or historical runs.
+
+JSON provenance and scientific records, HDF5 segment tables, and bootstrap/2D
+histogram NPZ files remain standard outputs. The data-quality HTML summary links
+to the PDF; inline images require `--write-png`. Existing output files are not
+deleted. Use a fresh run ID for clean output; modular `--rerun` preserves the old
+output in `.history/`. Export flags participate in plotting-stage cache checks,
+so changing them on `--resume` requires `--rerun` for the affected plot modules.
+Keep flags consistent on subsequent resumes. Segmentation is unaffected.
+
+New dQ/dx JSON reports include histogram edges and counts, so comparison scripts
+work without CSV exports. They still read CSVs from older reports. The comparison
+CSV option exports member dQ/dx curves; the MPV-drift CSV option exports sample
+summary bins. Neither is needed to render PDFs.
+
 Use one `fsdcube/` workspace for selections, analyses, and comparisons. Sample
 names describe productions; analysis names describe the method inside each run.
 The repository stores code and analysis recipes. Large outputs and the local
@@ -884,14 +908,14 @@ recipe as the combined timing plot above. It reads `events/hits` directly and
 includes track-rejected hits. It does not require rebuilding selections or
 segment tables. It produces:
 
-- `total_charge_by_separation.png/.pdf`: all recipe samples overlaid in two
+- `total_charge_by_separation.pdf`: all recipe samples overlaid in two
   panels, **25 ≤ Δt ≤ 40** and **Δt > 40** CRS ticks, plotting Q₁ + Q₂.
-- `<sample>_charge_breakdown.png/.pdf`: first-hit, second-hit and total-charge
+- `<sample>_charge_breakdown.pdf`: first-hit, second-hit and total-charge
   curves for each sample, with panels for all finite-time pairs and both timing
   categories. The all-pairs panel also includes separations below 25 ticks.
-- `data_prc16_mc_charge_overlay.png/.pdf`: the same three panels with prc16 data
+- `data_prc16_mc_charge_overlay.pdf`: the same three panels with prc16 data
   (solid) and MC (dashed); color identifies first hit, second hit or total.
-- `<sample>_<category>_<component>.csv`: common bin edges, raw count and fraction
+- With `--write-csv`, `<sample>_<category>_<component>.csv`: common bin edges, raw count and fraction
   for each curve. Categories are `all`, `dt25_40`, `dt_gt40`; components are
   `first`, `second`, `total`. `manifest.json` in the parent run folder contains
   pair counts, invalid-charge counts and per-component underflow/overflow.
@@ -928,7 +952,7 @@ python -u -m analysis.two_hit_charge \
   --bins 100 --charge-min 0 --charge-max 200
 
 OUT="$SCRATCH/fsdcube/comparisons/reflow-v3-feb2026-prc2_vs_prc8_vs_prc16_vs_fsdcube-sim-v1-prc256/analysis/two-hit-charge-001"
-ls "$OUT/two_hit_charge/"*.png
+ls "$OUT/two_hit_charge/"*.pdf
 ```
 
 The existing prc2, prc8, prc16 and MC sample registries must be present under
@@ -944,3 +968,27 @@ including pairs outside the original timing plot's displayed 200-tick range.
 For a paired comparison recipe instead, pass `--overlay-data data`. For the
 combined recipe the default is `--overlay-data data_prc16`. The command writes
 only new analysis outputs and never modifies input selections.
+
+### Charge-legend statistics and 0–80 ke− rerun
+
+Each first/second/total curve now includes mean and FWHM in ke− in its legend,
+including the prc16/MC overlay. The mean uses the actual charges of valid pairs,
+including underflow and overflow, rather than bin centers. FWHM uses linear
+interpolation between bin centers at the nearest half-height crossings around
+the highest histogram bin; ties use the lowest-charge maximum. It is an empirical
+binned width, without fitting, smoothing or uncertainty estimation, and can
+change with binning. If either crossing is outside the displayed histogram (or
+there are no entries), it is `n/a` in the legend and null in JSON. Statistics are
+saved per category/component in the manifest. A mean with no valid pairs is also
+unavailable.
+
+```bash
+python -u -m analysis.two_hit_charge \
+  --config configs/analyses/hit_timing_prc_comparison.json \
+  --root "$SCRATCH/fsdcube" \
+  --run-id two-hit-charge-zoom-stats-001 \
+  --charge-max 80 --bins 80
+```
+
+This creates six PDFs and no PNGs or CSVs, plus the parent run's config and
+manifest. Add either export flag only when needed.

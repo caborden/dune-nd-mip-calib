@@ -40,8 +40,8 @@ class LayoutTests(unittest.TestCase):
                     files=[dict(output='/historical/path/one.hdf5', status='complete')]))
         data_source = self.root/'fsdcube-charge-splitting'/SPECS[0][2]/SPECS[0][3]
         mc_source = self.root/'fsdcube-charge-splitting'/SPECS[1][2]/SPECS[1][3]
-        analyze(data_source, self.base/'dqdx_data_v1', face_cuts='none')
-        analyze(data_source, self.base/'dqdx_data_mc_v1', mc=mc_source, face_cuts='none')
+        analyze(data_source, self.base/'dqdx_data_v1', face_cuts='none', write_csv=True, write_png=True)
+        analyze(data_source, self.base/'dqdx_data_mc_v1', mc=mc_source, face_cuts='none', write_csv=True, write_png=True)
         archive = self.root/'fsdcube-charge-splitting/FSDCubeSim_v1_prc256-20261003-191727'
         archive.mkdir()
         (archive/'inputs.txt').write_text('old list\n')
@@ -101,16 +101,32 @@ class LayoutTests(unittest.TestCase):
                 self.migrate()
         self.assertEqual(self.migrate()['status'], 'complete')
 
+    def test_pdf_defaults_and_export_cache_settings(self):
+        self.migrate()
+        with redirect_stdout(io.StringIO()):
+            directory = run(self.config, self.base, 'pdf-defaults', modules=['all'])
+        for module in ['dqdx', 'hit_density', 'selection_hits']:
+            self.assertTrue(list((directory/module).glob('*.pdf')))
+            self.assertFalse(list((directory/module).glob('*.png')))
+            self.assertFalse(list((directory/module).glob('*.csv')))
+        from analysis.compare_dqdx import load_member
+        self.assertGreater(load_member('data', directory/'dqdx')['counts'].sum(), 0)
+        with self.assertRaisesRegex(ValueError, 'settings/code changed'):
+            run(self.config, self.base, 'pdf-defaults', modules=['dqdx'], resume=True, write_png=True)
+        with redirect_stdout(io.StringIO()):
+            run(self.config, self.base, 'pdf-defaults', modules=['dqdx'], rerun=['dqdx'], write_png=True)
+        self.assertTrue((directory/'dqdx/data_dqdx.png').exists())
+
     def test_runner_reuses_segments_adds_plots_and_matches_legacy(self):
         self.migrate()
         with redirect_stdout(io.StringIO()):
-            directory = run(self.config, self.base, 'run-002', modules=['segments'])
+            directory = run(self.config, self.base, 'run-002', modules=['segments'], write_csv=True, write_png=True)
         shared = directory/'shared/segments.hdf5'
         before = shared.stat().st_mtime_ns
         self.assertFalse((directory/'dqdx').exists())
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'run-002', modules=['dqdx'], resume=True)
-            run(self.config, self.base, 'run-002', modules=['all'], resume=True)
+            run(self.config, self.base, 'run-002', modules=['dqdx'], resume=True, write_csv=True, write_png=True)
+            run(self.config, self.base, 'run-002', modules=['all'], resume=True, write_csv=True, write_png=True)
         self.assertEqual(shared.stat().st_mtime_ns, before)
         self.assertTrue((directory/'dqdx/data_mc_dqdx.pdf').exists())
         self.assertTrue((directory/'hit_density/data_mc_hit_density.png').exists())
@@ -126,21 +142,21 @@ class LayoutTests(unittest.TestCase):
         config['segments']['segment_length_cm'] = 4
         write_json(self.config, config)
         with self.assertRaisesRegex(ValueError, '--rerun segments'):
-            run(self.config, self.base, 'run-002', resume=True)
+            run(self.config, self.base, 'run-002', resume=True, write_csv=True, write_png=True)
         self.assertEqual((directory/'manifest.json').read_bytes(), manifest)
 
     def test_failed_plot_retry_reuses_completed_segments(self):
         self.migrate()
         with patch('analysis.run.plot_segments', side_effect=RuntimeError('plot failure')):
             with redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'plot failure'):
-                run(self.config, self.base, 'run-002')
+                run(self.config, self.base, 'run-002', write_csv=True, write_png=True)
         directory = self.base/'comparisons'/COMPARISON_ID/'analysis/run-002'
         record = read_json(directory/'manifest.json')
         self.assertEqual(record['status'], 'failed')
         self.assertEqual(record['stages']['segments']['status'], 'complete')
         before = (directory/'shared/segments.hdf5').stat().st_mtime_ns
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'run-002', resume=True)
+            run(self.config, self.base, 'run-002', resume=True, write_csv=True, write_png=True)
         self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, before)
         self.assertEqual(read_json(directory/'manifest.json')['status'], 'complete')
 
@@ -149,33 +165,33 @@ class LayoutTests(unittest.TestCase):
         write_json(self.config, dict(target=dict(kind='sample', id=MC_ID),
                                     modules=dict(segments=dict(segment_length_cm=4))))
         with self.assertRaisesRegex(ValueError, 'top-level segments'):
-            run(self.config, self.base, 'misplaced-settings', modules=['segments'])
+            run(self.config, self.base, 'misplaced-settings', modules=['segments'], write_csv=True, write_png=True)
         self.assertFalse((self.base/'samples'/MC_ID/'analysis/misplaced-settings').exists())
         write_json(self.config, dict(target=dict(kind='sample', id=MC_ID), segments=dict(face_cuts='none')))
         with self.assertRaisesRegex(ValueError, 'Unknown module'):
-            run(self.config, self.base, 'invalid', modules=['pixel_charge'])
+            run(self.config, self.base, 'invalid', modules=['pixel_charge'], write_csv=True, write_png=True)
         self.assertFalse((self.base/'samples'/MC_ID/'analysis/invalid').exists())
         with redirect_stdout(io.StringIO()):
-            directory = run(self.config, self.base, 'run-002')
+            directory = run(self.config, self.base, 'run-002', write_csv=True, write_png=True)
         self.assertTrue((directory/'dqdx/mc_dqdx.png').exists())
         self.assertFalse((directory/'dqdx/data_dqdx.png').exists())
         with redirect_stdout(io.StringIO()):
-            density_dir = run(self.config, self.base, 'density-only', modules=['hit_density'])
+            density_dir = run(self.config, self.base, 'density-only', modules=['hit_density'], write_csv=True, write_png=True)
         self.assertTrue((density_dir/'hit_density/mc_hit_density.png').exists())
         self.assertFalse((density_dir/'dqdx').exists())
         with self.assertRaises(FileExistsError):
-            run(self.config, self.base, 'run-002')
+            run(self.config, self.base, 'run-002', write_csv=True, write_png=True)
         (directory/'dqdx/mc_dqdx.png').unlink()
         with self.assertRaisesRegex(ValueError, 'missing'):
-            run(self.config, self.base, 'run-002', resume=True)
+            run(self.config, self.base, 'run-002', resume=True, write_csv=True, write_png=True)
         write_json(self.config, dict(target=dict(kind='sample', id=DATA_ID)))
         with self.assertRaisesRegex(ValueError, '--rerun segments'):
-            run(self.config, self.base, 'run-001', resume=True)
+            run(self.config, self.base, 'run-001', resume=True, write_csv=True, write_png=True)
 
     def test_mpv_top_bottom_rerun_reuses_segments(self):
         self.migrate()
         with redirect_stdout(io.StringIO()):
-            directory = run(self.config, self.base, 'crossing-check', modules=['hit_density'])
+            directory = run(self.config, self.base, 'crossing-check', modules=['hit_density'], write_csv=True, write_png=True)
         table = directory/'shared/segments.hdf5'
         before = table.stat().st_mtime_ns
         config = read_json(self.config)
@@ -183,7 +199,7 @@ class LayoutTests(unittest.TestCase):
             top_bottom_y_bounds_cm=[0,10], top_bottom_margin_cm=1, bootstrap_samples=20)}
         write_json(self.config, config)
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'crossing-check', modules=['hit_density'], rerun=['hit_density'])
+            run(self.config, self.base, 'crossing-check', modules=['hit_density'], rerun=['hit_density'], write_csv=True, write_png=True)
         self.assertEqual(table.stat().st_mtime_ns, before)
         result = read_json(directory/'hit_density/analysis.json')
         self.assertEqual(result['settings']['statistic'], 'mpv')
@@ -202,7 +218,7 @@ class LayoutTests(unittest.TestCase):
         before = (directory/'shared/segments.hdf5').stat().st_mtime_ns
         original = (directory/'dqdx/data_mc_dqdx.png').read_bytes()
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'run-001', modules=['dqdx'], rerun=['dqdx'])
+            run(self.config, self.base, 'run-001', modules=['dqdx'], rerun=['dqdx'], write_csv=True, write_png=True)
         self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, before)
         titles = [s['title'] for s in read_json(directory/'dqdx/analysis.json')['samples']]
         self.assertEqual(titles, ['FSD Cube Data Fit', 'FSD Cube Simulation Fit'])
@@ -212,27 +228,27 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue((saved.parent/'segments.hdf5').exists())
         with redirect_stdout(io.StringIO()):
             check(self.root)  # Original hashes are verified against preserved history.
-            run(self.config, self.base, 'run-001', modules=['hit_density'], resume=True)
+            run(self.config, self.base, 'run-001', modules=['hit_density'], resume=True, write_csv=True, write_png=True)
         self.assertTrue((directory/'hit_density/data_mc_hit_density.png').exists())
         self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, before)
 
     def test_failed_refresh_leaves_old_outputs_then_plot_settings_can_change(self):
         self.migrate()
         with redirect_stdout(io.StringIO()):
-            directory = run(self.config, self.base, 'update', modules=['all'])
+            directory = run(self.config, self.base, 'update', modules=['all'], write_csv=True, write_png=True)
         shared_time = (directory/'shared/segments.hdf5').stat().st_mtime_ns
         density_time = (directory/'hit_density/data_mc_hit_density.png').stat().st_mtime_ns
         old = (directory/'dqdx/data_dqdx.png').read_bytes()
         with patch('analysis.run.plot_segments', side_effect=RuntimeError('refresh failure')):
             with redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
-                run(self.config, self.base, 'update', modules=['dqdx'], rerun=['dqdx'])
+                run(self.config, self.base, 'update', modules=['dqdx'], rerun=['dqdx'], write_csv=True, write_png=True)
         self.assertEqual((directory/'dqdx/data_dqdx.png').read_bytes(), old)
         self.assertEqual(read_json(directory/'manifest.json')['stages']['dqdx']['status'], 'complete')
         config = read_json(self.config)
         config['modules'] = {'dqdx': {'bins': 60}}
         write_json(self.config, config)
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'update', modules=['dqdx'], rerun=['dqdx'])
+            run(self.config, self.base, 'update', modules=['dqdx'], rerun=['dqdx'], write_csv=True, write_png=True)
         self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, shared_time)
         self.assertEqual((directory/'hit_density/data_mc_hit_density.png').stat().st_mtime_ns, density_time)
         self.assertEqual(read_json(directory/'dqdx/analysis.json')['settings']['bins'], 60)
@@ -240,20 +256,20 @@ class LayoutTests(unittest.TestCase):
     def test_regenerated_segments_invalidate_and_refresh_dependents(self):
         self.migrate()
         with redirect_stdout(io.StringIO()):
-            directory = run(self.config, self.base, 'update', modules=['all'])
+            directory = run(self.config, self.base, 'update', modules=['all'], write_csv=True, write_png=True)
         old = read_json(directory/'manifest.json')['stages']['segments']['generation']
         config = read_json(self.config)
         config['segments']['segment_length_cm'] = 4
         write_json(self.config, config)
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'update', modules=['segments'], rerun=['segments'])
+            run(self.config, self.base, 'update', modules=['segments'], rerun=['segments'], write_csv=True, write_png=True)
         state = read_json(directory/'manifest.json')
         self.assertNotEqual(state['stages']['segments']['generation'], old)
         self.assertEqual(state['stages']['dqdx']['status'], 'stale')
         self.assertEqual(state['stages']['hit_density']['status'], 'stale')
         self.assertTrue(next(directory.glob('.history/*/shared/segments.hdf5')).exists())
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'update', modules=['all'], resume=True)
+            run(self.config, self.base, 'update', modules=['all'], resume=True, write_csv=True, write_png=True)
         state = read_json(directory/'manifest.json')
         self.assertTrue(all(stage['status'] == 'complete' for stage in state['stages'].values()))
 
@@ -262,7 +278,7 @@ class LayoutTests(unittest.TestCase):
         from analysis.run import MODULES
         self.migrate()
         with redirect_stdout(io.StringIO()):
-            directory = run(self.config, self.base, 'old-run', modules=['dqdx'])
+            directory = run(self.config, self.base, 'old-run', modules=['dqdx'], write_csv=True, write_png=True)
         manifest = read_json(directory/'manifest.json')
         manifest.pop('state_version')
         manifest['source_hashes']['analysis/run.py'] = 'historical-runner-hash'
@@ -280,5 +296,5 @@ class LayoutTests(unittest.TestCase):
         write_json(directory/'manifest.json', manifest)
         before = (directory/'shared/segments.hdf5').stat().st_mtime_ns
         with redirect_stdout(io.StringIO()):
-            run(self.config, self.base, 'old-run', modules=['hit_density'], resume=True)
+            run(self.config, self.base, 'old-run', modules=['hit_density'], resume=True, write_csv=True, write_png=True)
         self.assertEqual((directory/'shared/segments.hdf5').stat().st_mtime_ns, before)

@@ -5,6 +5,7 @@ in the source file for separate charge-splitting studies. No implicit TPC geomet
 or lifetime correction is applied.
 """
 import argparse
+from analysis.exports import add_export_arguments
 import json
 from pathlib import Path
 from analysis.dqdx import analyze, fit_counts, plot_panel
@@ -27,6 +28,7 @@ if __name__ == '__main__':
     parser.add_argument('--hist-range',type=float,nargs=2,default=(0.,90.))
     parser.add_argument('--fit-range',type=float,nargs=2,default=(20.,50.))
     parser.add_argument('--min-fit-entries',type=int,default=100)
+    add_export_arguments(parser)
     args = vars(parser.parse_args())
     if args['data'] is None and args['mc'] is None:
         parser.error('provide at least one of --data or --mc')

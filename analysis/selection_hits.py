@@ -6,6 +6,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+from .exports import figure_extensions, save_csv
 from .io import write_json, file_identity, code_hashes
 
 SETTING_KEYS = {'charge_bins', 'charge_range'}
@@ -59,7 +60,7 @@ def summarize(path, settings):
                 charge_counts=counts.tolist(), multiplicity=dict(sorted(multiplicity.items())))
 
 
-def draw(samples, directory):
+def draw(samples, directory, write_png=False):
     for variable in ['charge', 'multiplicity']:
         fig, ax = plt.subplots(figsize=(8, 5))
         for sample in samples:
@@ -82,12 +83,12 @@ def draw(samples, directory):
         ax.legend()
         ax.grid(alpha=.25)
         fig.tight_layout()
-        for ext in ['png', 'pdf']:
+        for ext in figure_extensions(write_png):
             fig.savefig(Path(directory)/f'{variable}.{ext}', dpi=180)
         plt.close(fig)
 
 
-def analyze(samples, output_dir, settings):
+def analyze(samples, output_dir, settings, write_csv=False, write_png=False):
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     results = []
@@ -95,13 +96,13 @@ def analyze(samples, output_dir, settings):
         result = dict(summarize(path, settings), sample_kind=kind, label='Data' if kind == 'data' else 'Simulation')
         results.append(result)
         edges = result['charge_edges']
-        np.savetxt(directory/f'{kind}_charge.csv', np.column_stack([edges[:-1], edges[1:], result['charge_counts']]),
+        save_csv(write_csv, directory/f'{kind}_charge.csv', np.column_stack([edges[:-1], edges[1:], result['charge_counts']]),
                    delimiter=',', header='bin_low,bin_high,count', comments='')
-        np.savetxt(directory/f'{kind}_multiplicity.csv', np.asarray(list(result['multiplicity'].items())).reshape(-1, 2),
+        save_csv(write_csv, directory/f'{kind}_multiplicity.csv', np.asarray(list(result['multiplicity'].items())).reshape(-1, 2),
                    fmt='%d', delimiter=',', header='hits_per_pixel_event,pixel_events', comments='')
-    draw(results, directory)
-    write_json(directory/'analysis.json', dict(status='complete', settings=settings, samples=results,
-        source_hashes=code_hashes(['analysis/selection_hits.py']),
+    draw(results, directory, write_png=write_png)
+    write_json(directory/'analysis.json', dict(status='complete', settings=settings, samples=results, exports=dict(write_csv=write_csv, write_png=write_png),
+        source_hashes=code_hashes(['analysis/exports.py', 'analysis/selection_hits.py']),
         definitions=dict(hit_view='selected_track_id >= 0; each stored hit counted once; no segment cuts',
                          pixel_key=PIXEL_KEYS, scope='file_id, source_event_row',
                          multiplicity='one entry per occupied pixel per event, pooled across events; no zero-hit pixels',

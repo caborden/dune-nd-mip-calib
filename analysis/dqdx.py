@@ -16,6 +16,7 @@ import numpy as np
 
 from .segments import build_segments
 from .config import make_settings
+from .exports import figure_extensions, save_csv
 from .io import code_hashes
 from pixel_dqdx.dqdx import fit_histogram, langau
 
@@ -57,7 +58,7 @@ def plot_panel(ax, counts, edges, title, fit_range, min_fit_entries):
 
 
 
-def plot_segments(segment_file, output_dir, config):
+def plot_segments(segment_file, output_dir, config, write_csv=False, write_png=False):
     """dQ/dx module: consume shared segments, write only plots/fit products."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +75,7 @@ def plot_segments(segment_file, output_dir, config):
             samples.append((kind, title, attrs['input_file']))
             records.append(dict(sample_id=int(sample_id), sample_kind=kind, title=title,
                                 input=attrs['input_file'], audit=json.loads(attrs['audit'])))
-    manifest = dict(status='incomplete', settings=config, samples=records,
+    manifest = dict(status='incomplete', exports=dict(write_csv=write_csv, write_png=write_png), settings=config, samples=records,
                     segment_file=str(Path(segment_file).resolve()),
                     upstream_commit='33cf2fe926afe416b31fe930f18dff80b9ab47d8',
                     generated_utc=datetime.now(timezone.utc).isoformat(),
@@ -102,14 +103,15 @@ def plot_segments(segment_file, output_dir, config):
             result['sample_id'] = 0 if kind == 'data' else 1
             result['sample_kind'] = kind
             result['outside_histogram_range'] = tails[index]
+            result['histogram'] = dict(edges=edges.tolist(), counts=counts[index].tolist())
             fit_summaries.append(result)
             fig.text(.5,.01,'Fit: upstream Moyal-like approximation × Gaussian convolution',ha='center',fontsize=8)
             fig.tight_layout(rect=(0,.035,1,1))
             stem = f'{kind}_dqdx'
-            for ext in ['png','pdf']:
+            for ext in figure_extensions(write_png):
                 fig.savefig(output_dir/f'{stem}.{ext}',dpi=180)
             plt.close(fig)
-            np.savetxt(output_dir/f'{stem}_histogram.csv',
+            save_csv(write_csv, output_dir/f'{stem}_histogram.csv',
                        np.column_stack((edges[:-1],edges[1:],counts[index])),delimiter=',',
                        header='bin_low,bin_high,count',comments='')
         if len(samples)==2:
@@ -130,7 +132,7 @@ def plot_segments(segment_file, output_dir, config):
                 ax.legend()
             fig.text(.5,.01,'Fit: upstream Moyal-like approximation × Gaussian convolution',ha='center',fontsize=8)
             fig.tight_layout(rect=(0,.035,1,1))
-            for ext in ['png','pdf']:
+            for ext in figure_extensions(write_png):
                 fig.savefig(output_dir/f'data_mc_dqdx.{ext}',dpi=180)
             plt.close(fig)
         manifest.update(status='complete', fits=fit_summaries)
@@ -142,7 +144,7 @@ def plot_segments(segment_file, output_dir, config):
     return manifest
 
 
-def analyze(data=None, output_dir=None, mc=None, **settings):
+def analyze(data=None, output_dir=None, mc=None, write_csv=False, write_png=False, **settings):
     """Compatibility interface retaining the original standalone output layout."""
     if data is None and mc is None:
         raise ValueError('Provide at least one of --data or --mc')
@@ -155,7 +157,7 @@ def analyze(data=None, output_dir=None, mc=None, **settings):
     samples += ([('mc', 'FSD Cube Simulation Fit', mc)] if mc is not None else [])
     try:
         build_segments(samples, output_dir/'segments.hdf5', config)
-        return plot_segments(output_dir/'segments.hdf5', output_dir, config)
+        return plot_segments(output_dir/'segments.hdf5', output_dir, config, write_csv=write_csv, write_png=write_png)
     except Exception as exc:
         if not (output_dir/'analysis.json').exists():
             (output_dir/'analysis.json').write_text(json.dumps(dict(status='failed',settings=config,error=str(exc)),indent=2)+'\n')

@@ -16,6 +16,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 
 from .dqdx import fit_counts
+from .exports import add_export_arguments, figure_extensions, save_csv
 from .io import code_hashes, file_identity, read_json, runtime_versions, safe_name, write_json
 
 DRIFT_EDGES = np.linspace(0., 5000., 16)
@@ -139,7 +140,7 @@ def bootstrap(matrix, repetitions, seed, destination, resume=False):
     return draws
 
 
-def plot(samples, ratios, destination):
+def plot(samples, ratios, destination, write_png=False):
     centers = (DRIFT_EDGES[:-1]+DRIFT_EDGES[1:])/2
     fig, (ax, ratio_ax) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
                                       gridspec_kw={'height_ratios': [3, 1]})
@@ -172,7 +173,7 @@ def plot(samples, ratios, destination):
                  'Fit: Moyal-like component convolved with Gaussian; no lifetime correction.',
                  ha='center', fontsize=8)
         fig.tight_layout(rect=(0, .07, 1, 1))
-        for ext in ('png', 'pdf'):
+        for ext in figure_extensions(write_png):
             fig.savefig(destination/f'mpv_drift.{ext}', dpi=180)
     finally:
         plt.close(fig)
@@ -182,7 +183,7 @@ def finite_list(values):
     return [float(x) if np.isfinite(x) else None for x in values]
 
 
-def run(root, data, mc, run_id, repetitions=1000, seed=12345, minimum_fraction=.9, resume=False):
+def run(root, data, mc, run_id, repetitions=1000, seed=12345, minimum_fraction=.9, resume=False, write_csv=False, write_png=False):
     if repetitions < 2 or seed < 0 or not 0 < minimum_fraction <= 1:
         raise ValueError('Require >=2 bootstrap replicates, nonnegative seed, and 0 < success fraction <= 1')
     labels = [label for label, _ in data]
@@ -200,11 +201,11 @@ def run(root, data, mc, run_id, repetitions=1000, seed=12345, minimum_fraction=.
             raise ValueError(f'{label}: CRS tick period differs across samples')
     if len({item[3]['selection_input'] for item in prepared}) != len(prepared):
         raise ValueError('Duplicate source selections')
-    signature = dict(inputs=[dict(label=label, **file_identity(path)) for label, path, _, _ in prepared],
+    signature = dict(exports=dict(write_csv=write_csv, write_png=write_png), inputs=[dict(label=label, **file_identity(path)) for label, path, _, _ in prepared],
                      repetitions=repetitions, seed=seed, minimum_success_fraction=minimum_fraction,
                      drift_edges_ticks=DRIFT_EDGES.tolist(), dqdx_edges=DQDX_EDGES.tolist(),
                      fit_range=[20, 50], min_fit_entries=100, runtime=runtime_versions(),
-                     code=code_hashes(['analysis/mpv_drift.py', 'analysis/dqdx.py', 'pixel_dqdx/dqdx.py']))
+                     code=code_hashes(['analysis/exports.py', 'analysis/mpv_drift.py', 'analysis/dqdx.py', 'pixel_dqdx/dqdx.py']))
     directory = root/'comparisons/reflow-v3-feb2026-prc2_vs_prc8_vs_prc16/analysis'/safe_name(run_id)
     if directory.exists():
         if not resume or read_json(directory/'manifest.json')['signature'] != signature:
@@ -257,7 +258,12 @@ def run(root, data, mc, run_id, repetitions=1000, seed=12345, minimum_fraction=.
                                successful_pairs=success.tolist(), success_fraction=(success/repetitions).tolist()))
             # Preserve replica ordering for cross-bin and cross-ratio covariance analysis.
             checkpoint(output/f'{sample["label"]}-ratio-bootstrap.npz', ratio_draws, repetitions)
-        plot(samples, ratios, output)
+        for sample in samples:
+            keys = ['low', 'high', 'n_segments', 'n_tracks', 'mpv', 'bootstrap_se', 'successful_fits']
+            save_csv(write_csv, output/f'{sample["label"]}-summary.csv',
+                     [[np.nan if b[k] is None else b[k] for k in keys] for b in sample['bins']],
+                     delimiter=',', header=','.join(keys), comments='')
+        plot(samples, ratios, output, write_png=write_png)
         for identity in signature['inputs']:
             if file_identity(identity['path']) != {k: v for k, v in identity.items() if k != 'label'}:
                 raise ValueError('Input changed while running')
@@ -281,6 +287,7 @@ def main():
     parser.add_argument('--bootstrap-seed', type=int, default=12345)
     parser.add_argument('--min-success-fraction', type=float, default=.9)
     parser.add_argument('--resume', action='store_true')
+    add_export_arguments(parser)
     args = parser.parse_args()
     data = []
     for value in args.data:
@@ -289,7 +296,7 @@ def main():
             parser.error('--data requires LABEL=SEGMENTS_HDF5')
         data.append((label, path))
     print('Complete:', run(args.root, data, args.mc, args.run_id, args.bootstrap_samples,
-                          args.bootstrap_seed, args.min_success_fraction, args.resume))
+                          args.bootstrap_seed, args.min_success_fraction, args.resume, write_csv=args.write_csv, write_png=args.write_png))
 
 
 if __name__ == '__main__':

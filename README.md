@@ -347,3 +347,11 @@ Providing bounds applies the upstream fiducial hit mask. Adding
 before fiducialization. This geometry check is a bounding-box touch heuristic,
 not a proof of two actual track/face intersections. These are analysis cuts;
 the original track-selection HDF5 files remain unchanged.
+
+### Analysis plot exports
+
+Analysis scripts default to PDF figures. Use `--write-png` (alias `-write-png`)
+and/or `--write-csv` to opt into PNG copies and numerical CSV tables. JSON
+provenance, HDF5 segment tables, and NPZ checkpoints remain available by default.
+New dQ/dx JSON records contain the histogram counts needed by comparison scripts.
+See [output formats and two-hit charge statistics](docs/analysis-layout.md).

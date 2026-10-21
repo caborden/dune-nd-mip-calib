@@ -68,7 +68,10 @@ class HitTimeDifferenceTests(unittest.TestCase):
             write_json(root/'comparisons/pair/comparison.json', dict(samples={kind: {'id': kind} for kind in ['data','mc']}))
             config = root/'config.json'
             write_json(config, dict(target={'kind': 'comparison', 'id': 'pair'}))
-            output = run(config, root, 'test', bins=2, max_delta_ticks=10)
+            default = run(config, root, 'pdf-default')
+            self.assertEqual([p.suffix for p in (default/'hit_time_difference').iterdir()], ['.pdf'])
+            self.assertEqual(sum(read_json(default/'manifest.json')['samples']['data']['counts']), 4)
+            output = run(config, root, 'test', bins=2, max_delta_ticks=10, write_csv=True, write_png=True)
             self.assertEqual(read_json(output/'manifest.json')['status'], 'complete')
             self.assertEqual(read_json(output/'manifest.json')['samples']['data']['normalization_instances'], 4)
             table = np.genfromtxt(output/'hit_time_difference/data_delta_t.csv', delimiter=',', names=True)
@@ -77,7 +80,7 @@ class HitTimeDifferenceTests(unittest.TestCase):
             np.testing.assert_allclose(table['fraction'], [.5, .25])
             self.assertGreater((output/'hit_time_difference/hit_time_difference.png').stat().st_size, 1000)
             with self.assertRaises(FileExistsError):
-                run(config, root, 'test')
+                run(config, root, 'test', write_csv=True, write_png=True)
             # Three distinct data inputs plus one MC, with different bin populations.
             refs = {}
             for reset, delta in [('prc2', 2), ('prc8', 6), ('prc16', 20)]:
@@ -92,7 +95,7 @@ class HitTimeDifferenceTests(unittest.TestCase):
             combined = root/'combined.json'
             write_json(combined, dict(target=dict(kind='comparison', id='combined'), samples=refs))
             with patch('analysis.hit_time_difference.summarize', wraps=summarize) as scan:
-                result_dir = run(combined, root, 'overlay', bins=2, max_delta_ticks=10)
+                result_dir = run(combined, root, 'overlay', bins=2, max_delta_ticks=10, write_csv=True, write_png=True)
                 self.assertEqual(scan.call_count, 4)
                 self.assertEqual(sum(call.args[0] == path.resolve() for call in scan.call_args_list), 1)
             manifest = read_json(result_dir/'manifest.json')
@@ -104,11 +107,11 @@ class HitTimeDifferenceTests(unittest.TestCase):
                 np.testing.assert_allclose(table['fraction'], expected)
             self.assertEqual(read_json(root/'comparisons/combined/comparison.json')['samples'], refs)
             # A rerun with a fresh ID reuses the matching registry.
-            run(combined, root, 'overlay-again', bins=2, max_delta_ticks=10)
+            run(combined, root, 'overlay-again', bins=2, max_delta_ticks=10, write_csv=True, write_png=True)
             refs['prc2']['label'] = 'Changed label'
             write_json(combined, dict(target=dict(kind='comparison', id='combined'), samples=refs))
             with self.assertRaisesRegex(FileExistsError, 'registry differs'):
-                run(combined, root, 'conflict')
+                run(combined, root, 'conflict', write_csv=True, write_png=True)
             with h5py.File(path, 'r+') as f:
                 f['events/data'][0] = (0, 0, 0, 5)
             with self.assertRaisesRegex(ValueError, 'crosses source'):

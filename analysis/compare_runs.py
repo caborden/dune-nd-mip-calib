@@ -4,10 +4,11 @@ from pathlib import Path
 from .compare_dqdx import load_member, draw_overlay, product_identity, COLORS
 from .hit_density import save_plot
 from .selection_hits import draw as draw_hits
+from .exports import add_export_arguments
 from .io import read_json, write_json, safe_name, code_hashes
 
 
-def compare(root, members, comparison_id, run_id):
+def compare(root, members, comparison_id, run_id, write_csv=False, write_png=False):
     root = Path(root).resolve()
     if len(members) < 2 or len({label for label, _ in members}) != len(members) or any(not label.strip() for label, _ in members):
         raise ValueError('Provide at least two unique nonempty labels')
@@ -42,23 +43,23 @@ def compare(root, members, comparison_id, run_id):
             raise ValueError('Hit-density segment settings differ')
     directory = root/'comparisons'/safe_name(comparison_id)/'analysis'/safe_name(run_id)
     directory.mkdir(parents=True, exist_ok=False)
-    record = dict(status='running', members=[dict(label=l, run=str(root/p)) for l,p in members],
+    record = dict(exports=dict(write_csv=write_csv, write_png=write_png), status='running', members=[dict(label=l, run=str(root/p)) for l,p in members],
                   products=products + [p for m in dqdx for p in m['products']],
-                  source_hashes=code_hashes(['analysis/compare_runs.py', 'analysis/compare_dqdx.py',
+                  source_hashes=code_hashes(['analysis/exports.py', 'analysis/compare_runs.py', 'analysis/compare_dqdx.py',
                                             'analysis/hit_density.py', 'analysis/selection_hits.py']))
     write_json(directory/'manifest.json', record)
     try:
-        draw_overlay(dqdx, directory, .5, title='FSD Cube: data comparison')
+        draw_overlay(dqdx, directory, .5, title='FSD Cube: data comparison', write_png=write_png, write_csv=write_csv)
         density_samples, hit_samples = [], []
         for i, (label, _) in enumerate(members):
             density_samples.append(dict(density[i]['samples'][0], label=label, color=COLORS[i % len(COLORS)]))
             hit_samples.append(dict(hits[i]['samples'][0], label=label, color=COLORS[i % len(COLORS)]))
-        save_plot(directory, 'hit_density_overlay', density_samples, density[0]['settings'], density[0]['segment_settings'])
-        draw_hits(hit_samples, directory)
+        save_plot(directory, 'hit_density_overlay', density_samples, density[0]['settings'], density[0]['segment_settings'], write_png=write_png)
+        draw_hits(hit_samples, directory, write_png=write_png)
         for identity in record['products']:
             if product_identity(identity['path']) != identity:
                 raise ValueError('Source products changed during comparison')
-        record.update(status='complete', outputs=[product_identity(p) for p in sorted(directory.iterdir()) if p.suffix in {'.pdf', '.png'}])
+        record.update(status='complete', outputs=[product_identity(p) for p in sorted(directory.iterdir()) if p.suffix in {'.pdf', '.png', '.csv'}])
     except Exception as exc:
         record.update(status='failed', error=str(exc))
         raise
@@ -73,6 +74,7 @@ def main():
     parser.add_argument('--member', action='append', required=True, help='LABEL=sample analysis run directory')
     parser.add_argument('--comparison-id', required=True)
     parser.add_argument('--run-id', required=True)
+    add_export_arguments(parser)
     args = parser.parse_args()
     members = []
     for value in args.member:
@@ -80,7 +82,7 @@ def main():
         if not separator or not path:
             parser.error('Expected --member LABEL=RUN_DIRECTORY')
         members.append((label, Path(path)))
-    print(compare(args.root, members, args.comparison_id, args.run_id))
+    print(compare(args.root, members, args.comparison_id, args.run_id, write_csv=args.write_csv, write_png=args.write_png))
 
 
 if __name__ == '__main__':

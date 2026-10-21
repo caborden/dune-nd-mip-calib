@@ -1,6 +1,6 @@
 """Overlay data dQ/dx histograms and saved fits from completed analysis modules.
 
-This lightweight comparison reads CSV/JSON products, not selection or segment
+This lightweight comparison reads JSON products (or historical CSV/JSON products), not selection or segment
 HDF5 files. Each input is a dqdx/ directory, labeled independently of data/MC kind.
 """
 import argparse
@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import brentq, minimize_scalar
 
+from .exports import add_export_arguments, figure_extensions, save_csv
 from .io import code_hashes, file_identity, read_json, safe_name, write_json
 from pixel_dqdx.dqdx import langau
 
@@ -72,7 +73,7 @@ def load_member(label, directory):
     directory = Path(directory).resolve()
     report_path = directory/'analysis.json'
     histogram_path = directory/'data_dqdx_histogram.csv'
-    identities = [product_identity(path) for path in (report_path, histogram_path)]
+    identities = [product_identity(report_path)]
     report = read_json(report_path)
     if report.get('status') != 'complete':
         raise ValueError(f'{label}: dQ/dx analysis is not complete: {report_path}')
@@ -90,7 +91,18 @@ def load_member(label, directory):
     if len(fits) != 1 or len(samples) != 1:
         raise ValueError(f'{label}: expected exactly one data sample and fit record')
     fit, sample, settings = fits[0], samples[0], report['settings']
-    table = np.atleast_1d(np.genfromtxt(histogram_path, delimiter=',', names=True))
+    if 'histogram' in fit:
+        histogram = fit['histogram']
+        saved_edges = np.asarray(histogram['edges'])
+        saved_counts = np.asarray(histogram['counts'])
+        if saved_edges.ndim != 1 or len(saved_edges) != len(saved_counts) + 1:
+            raise ValueError(f'{label}: invalid saved histogram dimensions')
+        table = np.rec.fromarrays([saved_edges[:-1], saved_edges[1:], saved_counts],
+                                  names='bin_low,bin_high,count')
+    else:
+        # Historical module reports kept histogram counts only in CSV.
+        identities.append(product_identity(histogram_path))
+        table = np.atleast_1d(np.genfromtxt(histogram_path, delimiter=',', names=True))
     if table.dtype.names != ('bin_low', 'bin_high', 'count'):
         raise ValueError(f'{label}: unsupported histogram columns')
     edges = np.linspace(*settings['hist_range'], settings['bins'] + 1)
@@ -123,7 +135,7 @@ def load_member(label, directory):
                 edges=edges, counts=counts, fraction=counts/total)
 
 
-def draw_overlay(members, output_dir, alpha, title='FSD Cube data: periodic-reset dependence'):
+def draw_overlay(members, output_dir, alpha, title='FSD Cube data: periodic-reset dependence', write_png=False, write_csv=False):
     settings = members[0]['settings']
     fig, ax = plt.subplots(figsize=(10.5, 6.5))
     try:
@@ -162,12 +174,17 @@ def draw_overlay(members, output_dir, alpha, title='FSD Cube data: periodic-rese
                  'Fit: upstream Moyal-like approximation convolved with Gaussian; MPV is the component parameter.',
                  ha='center', va='bottom', fontsize=8)
         fig.tight_layout(rect=(0, .08, 1, 1))
-        fig.savefig(output_dir/'dqdx_prc_overlay.pdf')
+        for ext in figure_extensions(write_png):
+            fig.savefig(output_dir/f'dqdx_prc_overlay.{ext}', dpi=180)
+        for index, member in enumerate(members):
+            save_csv(write_csv, output_dir/f'dqdx_member_{index+1}.csv',
+                     np.column_stack([member['edges'][:-1], member['edges'][1:], member['counts'], member['fraction']]),
+                     delimiter=',', header='bin_low,bin_high,count,fraction', comments='')
     finally:
         plt.close(fig)
 
 
-def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=.5):
+def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=.5, write_csv=False, write_png=False):
     root = Path(root).resolve()
     if not 0 < alpha < 1:
         raise ValueError('Fill alpha must be between zero and one')
@@ -196,11 +213,11 @@ def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=
     directory.mkdir(parents=True, exist_ok=False)
     if not registry_path.exists():
         write_json(registry_path, registry)
-    manifest = dict(format='dqdx-overlay-v2', status='incomplete',
+    manifest = dict(exports=dict(write_csv=write_csv, write_png=write_png), format='dqdx-overlay-v2', status='incomplete',
                     created_utc=datetime.now(timezone.utc).isoformat(),
                     normalization='fraction of in-range track segments per bin: count / total; fits divided by the same total',
                     alpha=alpha, settings=members[0]['settings'],
-                    source_hashes=code_hashes(['analysis/compare_dqdx.py', 'pixel_dqdx/dqdx.py']),
+                    source_hashes=code_hashes(['analysis/exports.py', 'analysis/compare_dqdx.py', 'pixel_dqdx/dqdx.py']),
                     members=[{key: value for key, value in m.items()
                               if key not in {'edges', 'counts', 'fraction'}} for m in members])
     write_json(directory/'manifest.json', manifest)
@@ -209,7 +226,7 @@ def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=
     output = directory/'dqdx_overlay'
     try:
         output.mkdir()
-        draw_overlay(members, output, alpha)
+        draw_overlay(members, output, alpha, write_png=write_png, write_csv=write_csv)
         for m in members:
             for identity in m['products']:
                 if product_identity(identity['path']) != identity:
@@ -231,6 +248,7 @@ def main():
     parser.add_argument('--comparison-id', default=DEFAULT_COMPARISON)
     parser.add_argument('--run-id', required=True, help='new overlay run ID; existing runs are refused')
     parser.add_argument('--alpha', type=float, default=.5)
+    add_export_arguments(parser)
     args = parser.parse_args()
     members = []
     for member in args.member:
@@ -238,7 +256,7 @@ def main():
         if not separator or not path:
             parser.error('--member must have the form LABEL=DQDX_DIR')
         members.append((label, path))
-    directory = compare(args.root, members, args.run_id, args.comparison_id, args.alpha)
+    directory = compare(args.root, members, args.run_id, args.comparison_id, args.alpha, write_csv=args.write_csv, write_png=args.write_png)
     print(f'Complete: {directory}')
 
 

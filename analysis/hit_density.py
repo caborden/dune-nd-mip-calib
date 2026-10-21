@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from .exports import add_export_arguments, figure_extensions, save_csv
 from .io import code_hashes, file_identity, write_json
 
 SETTING_KEYS = {'drift_bins', 'drift_range_ticks', 'drift_edges_ticks', 'observable',
@@ -313,7 +314,7 @@ def draw_series(ax, bins, value_key, label, color, error_key='error'):
     ax.errorbar(x[valid], y[valid], yerr=errors[valid], fmt='none', color=color, capsize=3)
 
 
-def save_plot(directory, stem, samples, settings, segment_settings, ratio_bins=None):
+def save_plot(directory, stem, samples, settings, segment_settings, ratio_bins=None, write_png=False):
     fig, ax = plt.subplots(figsize=(8, 5))
     statistic_label = 'MPV (empirical mode)' if settings['statistic'] == 'mpv' else 'Mean'
     if ratio_bins is None:
@@ -344,13 +345,13 @@ def save_plot(directory, stem, samples, settings, segment_settings, ratio_bins=N
     fig.text(.5, .015, f'Selected recorded hits; {selection_label}; {methods[settings["uncertainty"]]}', ha='center', fontsize=8)
     fig.tight_layout(rect=(0, .035, 1, 1))
     try:
-        for extension in ['png', 'pdf']:
+        for extension in figure_extensions(write_png):
             fig.savefig(directory/f'{stem}.{extension}', dpi=180)
     finally:
         plt.close(fig)
 
 
-def save_distributions(directory, samples, settings):
+def save_distributions(directory, samples, settings, write_png=False):
     """Compare discrete recorded-hit distributions, normalized within each sample/bin."""
     nbins = settings['drift_bins']
     ncols = 3
@@ -397,20 +398,20 @@ def save_distributions(directory, samples, settings):
              'Dashed lines: means. Modes are empirical, not fitted MPVs.', ha='center', fontsize=9)
     fig.tight_layout(rect=(0, .025, 1, .96))
     try:
-        for extension in ['png', 'pdf']:
+        for extension in figure_extensions(write_png):
             fig.savefig(directory/f'hit_count_distributions.{extension}', dpi=180)
     finally:
         plt.close(fig)
 
 
-def plot_segments(segment_file, output_dir, settings=None):
+def plot_segments(segment_file, output_dir, settings=None, write_csv=False, write_png=False):
     """Plot shared segments; optionally consult their original selection for crossing IDs."""
     settings = make_settings(**(settings or {}))
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    manifest = dict(status='incomplete', settings=settings, segment_file=file_identity(segment_file),
+    manifest = dict(status='incomplete', exports=dict(write_csv=write_csv, write_png=write_png), settings=settings, segment_file=file_identity(segment_file),
                     generated_utc=datetime.now(timezone.utc).isoformat(),
-                    source_hashes=code_hashes(['analysis/hit_density.py', 'analysis/io.py']),
+                    source_hashes=code_hashes(['analysis/exports.py', 'analysis/hit_density.py', 'analysis/io.py']),
                     definitions=dict(observable='segment-weighted arithmetic mean' if settings['statistic'] == 'mean' else 'empirical mode of segment hit counts',
                         mpv='most populated integer nhits bin; lowest count chosen on ties; all tied modes reported',
                         drift_time='median recorded hit t_drift of each segment, unchanged ticks',
@@ -433,28 +434,28 @@ def plot_segments(segment_file, output_dir, settings=None):
             if settings['track_selection'] == 'top-bottom':
                 track_keys = ['file_id', 'source_event_row', 'track_id', 'y_min_cm', 'y_max_cm']
                 track_rows = [[t[k] for k in track_keys] for t in sample['track_selection']['accepted_tracks']]
-                np.savetxt(directory/f'{kind}_top_bottom_tracks.csv', np.asarray(track_rows).reshape(-1, 5),
+                save_csv(write_csv, directory/f'{kind}_top_bottom_tracks.csv', np.asarray(track_rows).reshape(-1, 5),
                            fmt=['%d','%d','%d','%.8g','%.8g'], delimiter=',', header=','.join(track_keys), comments='')
             keys = ['bin_low', 'bin_high', 'bin_center', 'n_segments', 'n_tracks', 'mean',
                     'mpv', 'value', 'std_dev', 'segment_sem', 'error', 'valid_bootstrap_replicates']
             rows = [[np.nan if b[key] is None else b[key] for key in keys] for b in sample['bins']]
-            np.savetxt(directory/f'{kind}_hit_density.csv', rows, delimiter=',',
+            save_csv(write_csv, directory/f'{kind}_hit_density.csv', rows, delimiter=',',
                        header=','.join(keys), comments='')
-            save_plot(directory, f'{kind}_hit_density', [sample], settings, segment_settings)
+            save_plot(directory, f'{kind}_hit_density', [sample], settings, segment_settings, write_png=write_png)
             histogram_rows = [[b['bin_low'], b['bin_high'], nhits, count, count/b['n_segments']]
                 for b in sample['bins'] for nhits, count in zip(b['hit_count_distribution']['nhits'],
                                                                b['hit_count_distribution']['counts'])]
-            np.savetxt(directory/f'{kind}_hit_count_distributions.csv',
+            save_csv(write_csv, directory/f'{kind}_hit_count_distributions.csv',
                        np.asarray(histogram_rows).reshape(-1, 5), delimiter=',',
                        header='bin_low,bin_high,nhits,n_segments,fraction', comments='')
-        save_distributions(directory, samples, settings)
+        save_distributions(directory, samples, settings, write_png=write_png)
         ratio_bins = ratios(samples)
         if ratio_bins:
-            save_plot(directory, 'data_mc_hit_density', samples, settings, segment_settings)
-            save_plot(directory, 'data_mc_hit_density_ratio', samples, settings, segment_settings, ratio_bins)
+            save_plot(directory, 'data_mc_hit_density', samples, settings, segment_settings, write_png=write_png)
+            save_plot(directory, 'data_mc_hit_density_ratio', samples, settings, segment_settings, ratio_bins, write_png=write_png)
             keys = ['bin_low', 'bin_high', 'bin_center', 'ratio', 'error']
             rows = [[np.nan if b[key] is None else b[key] for key in keys] for b in ratio_bins]
-            np.savetxt(directory/'data_mc_hit_density_ratio.csv', rows, delimiter=',',
+            save_csv(write_csv, directory/'data_mc_hit_density_ratio.csv', rows, delimiter=',',
                        header=','.join(keys), comments='')
         manifest.update(status='complete', ratio=ratio_bins)
     except Exception as exc:
@@ -481,12 +482,14 @@ def main():
     parser.add_argument('--bootstrap-samples', type=int, default=1000)
     parser.add_argument('--bootstrap-seed', type=int, default=12345)
     parser.add_argument('--min-segments', type=int, default=1)
+    add_export_arguments(parser)
     args = vars(parser.parse_args())
     segment_file = args.pop('segments')
     output_dir = Path(args.pop('output_dir')).resolve()
+    exports = {key: args.pop(key) for key in ('write_csv', 'write_png')}
     settings = make_settings(**args)
     output_dir.mkdir(parents=True, exist_ok=False)
-    result = plot_segments(segment_file, output_dir, settings)
+    result = plot_segments(segment_file, output_dir, settings, **exports)
     for sample in result['samples']:
         print(sample['sample_kind'], sample['audit'])
     print(f'Complete: {output_dir}')
