@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import glob
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -24,7 +25,7 @@ def write_manifest(path, data):
     os.replace(temporary, path)
 
 
-def valid_output(output, source, is2x2):
+def valid_output(output, source, is2x2, min_length_cm=29.0):
     """Resume only a complete output for unchanged input, code, and detector mode."""
     expected = signature(source)
     with h5py.File(output, 'r') as f:
@@ -34,7 +35,8 @@ def valid_output(output, source, is2x2):
             raise ValueError(f'Invalid per-input source metadata: {output}')
         meta = f['sources/0/metadata'].attrs
         for key, value in [('input_file', expected['path']), ('input_size_bytes', expected['size']),
-                           ('input_mtime_ns', expected['mtime_ns']), ('is2x2', is2x2)]:
+                           ('input_mtime_ns', expected['mtime_ns']), ('is2x2', is2x2),
+                           ('min_length_cm', min_length_cm)]:
             if meta.get(key) != value:
                 raise ValueError(f'Resume mismatch ({key}): {output}')
         for name in ['track_selection_fsd.py', 'efield.py', 'track_output_hdf5.py']:
@@ -43,14 +45,17 @@ def valid_output(output, source, is2x2):
                 raise ValueError(f'Resume code changed ({name}): {output}; choose a new output directory')
 
 
-def subprocess_runner(source, partial, is2x2, log):
+def subprocess_runner(source, partial, is2x2, log, min_length_cm=29.0):
     with log.open('w') as stream:
         subprocess.run([sys.executable, '-u', str(Path(__file__).with_name('track_selection_fsd.py')),
-                        str(source), str(partial), str(is2x2)],
+                        str(source), str(partial), str(is2x2), '--min-length-cm', str(min_length_cm)],
                        stdout=stream, stderr=subprocess.STDOUT, check=True)
 
 
-def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None, runner=None):
+def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None, runner=None,
+              min_length_cm=29.0):
+    if not math.isfinite(min_length_cm) or min_length_cm <= 0:
+        raise ValueError('min_length_cm must be finite and positive')
     inputs = [Path(path).resolve() for path in inputs]
     if not inputs or len(set(inputs)) != len(inputs):
         raise ValueError('Provide at least one input; duplicate input paths are refused')
@@ -65,10 +70,12 @@ def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None,
         if not resume:
             raise FileExistsError(f'{manifest_path}; use --resume or a new directory')
         manifest = json.loads(manifest_path.read_text())
-        if manifest['inputs'] != requested or manifest['is2x2'] != is2x2:
-            raise ValueError('Resume input list/order, input size/mtime, or detector mode changed')
+        if (manifest['inputs'] != requested or manifest['is2x2'] != is2x2
+                or manifest.get('min_length_cm') != min_length_cm):
+            raise ValueError('Resume input list/order, input size/mtime, detector mode, or length cut changed')
     else:
-        manifest = dict(inputs=requested, is2x2=is2x2, status='incomplete', files=[])
+        manifest = dict(inputs=requested, is2x2=is2x2, min_length_cm=min_length_cm,
+                        status='incomplete', files=[])
     runner = runner or subprocess_runner
     outputs = []
     records = []
@@ -92,7 +99,7 @@ def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None,
             if output.exists():
                 if not resume:
                     raise FileExistsError(output)
-                valid_output(output, source, is2x2)
+                valid_output(output, source, is2x2, min_length_cm)
                 record['status'] = 'complete'
                 record['reused'] = True
                 # A crash between publishing and unlinking may leave a second link.
@@ -103,7 +110,7 @@ def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None,
                     if not resume:
                         raise FileExistsError(partial)
                     try:
-                        valid_output(partial, source, is2x2)
+                        valid_output(partial, source, is2x2, min_length_cm)
                     except (OSError, ValueError):
                         # Never continue a partial event: preserve it and rerun the
                         # entire FLOW file. Completed other files remain untouched.
@@ -115,8 +122,8 @@ def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None,
                     record['status'] = 'running'
                     record['log'] = str(log)
                     write_manifest(manifest_path, manifest)
-                    runner(source, partial, is2x2, log)
-                    valid_output(partial, source, is2x2)
+                    runner(source, partial, is2x2, log, min_length_cm=min_length_cm)
+                    valid_output(partial, source, is2x2, min_length_cm)
                     publish(partial, output)
                 record['status'] = 'complete'
             write_manifest(manifest_path, manifest)
@@ -154,6 +161,8 @@ if __name__ == '__main__':
     parser.add_argument('--merged-output')
     parser.add_argument('--is2x2', action='store_true', help='default is FSD geometry')
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--min-length-cm', type=float, default=29.0,
+                        help='Strict minimum length in cm; recorded and checked on resume')
     args = parser.parse_args()
     inputs = list(args.inputs)
     for pattern in args.input_glob:
@@ -165,4 +174,5 @@ if __name__ == '__main__':
         inputs.extend(line.strip() for line in Path(args.input_list).read_text().splitlines()
                       if line.strip() and not line.lstrip().startswith('#'))
     # Duplicates are errors, including overlap between lists/globs.
-    run_batch(inputs, args.output_dir, args.is2x2, args.resume, args.merged_output)
+    run_batch(inputs, args.output_dir, args.is2x2, args.resume, args.merged_output,
+              min_length_cm=args.min_length_cm)

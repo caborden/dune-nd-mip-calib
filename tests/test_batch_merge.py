@@ -34,10 +34,10 @@ class BatchMergeTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def runner(self, source, output, is2x2, log):
+    def runner(self, source, output, is2x2, log, min_length_cm=29.0):
         self.calls.append(str(source))
         with log.open('w') as stream, redirect_stdout(stream):
-            self.selector.run(str(source),str(output),is2x2)
+            self.selector.run(str(source),str(output),is2x2,min_length_cm=min_length_cm)
 
     def produce(self, optional_missing=False, second_empty=False):
         if optional_missing:
@@ -157,13 +157,13 @@ class BatchMergeTests(unittest.TestCase):
 
     def test_failed_batch_input_is_rerun_without_duplicate_completed_inputs(self):
         attempts = []
-        def fail_second(source,output,is2x2,log):
+        def fail_second(source,output,is2x2,log,min_length_cm=29.0):
             attempts.append(str(source))
             if source == self.second:
                 with h5py.File(output,'w') as f:
                     f.attrs['status'] = 'incomplete'
                 raise RuntimeError('interrupted selection')
-            self.runner(source,output,is2x2,log)
+            self.runner(source,output,is2x2,log,min_length_cm=min_length_cm)
         with redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError,'interrupted'):
                 run_batch([self.first,self.second],self.root/'batch',runner=fail_second)
@@ -188,6 +188,16 @@ class BatchMergeTests(unittest.TestCase):
     def test_batch_duplicate_paths_refused(self):
         with self.assertRaisesRegex(ValueError,'duplicate'):
             run_batch([self.first,self.first],self.root/'batch',runner=self.runner)
+
+    def test_configured_length_reaches_runner_and_blocks_incompatible_resume(self):
+        with redirect_stdout(io.StringIO()):
+            outputs = run_batch([self.first], self.root/'length_batch', runner=self.runner,
+                                min_length_cm=55)
+        with h5py.File(outputs[0]) as f:
+            self.assertEqual(f['sources/0/metadata'].attrs['min_length_cm'], 55)
+        with self.assertRaisesRegex(ValueError, 'length cut changed'):
+            run_batch([self.first], self.root/'length_batch', runner=self.runner,
+                      resume=True, min_length_cm=29)
 
 
 if __name__ == '__main__':

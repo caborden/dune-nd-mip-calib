@@ -71,6 +71,32 @@ class OutputTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_configurable_length_accepts_thirty_cm_tracks(self):
+        self.fixture()
+        with h5py.File(self.source, 'r+') as f:
+            hits = f['charge/calib_prompt_hits/data'][:]
+            for axis in 'xyz':
+                hits[axis][:240] *= 0.3
+            hits['x'][240:] = np.nan
+            f['charge/calib_prompt_hits/data'][:] = hits
+        self.selector.run(str(self.source), str(self.output), False)
+        with h5py.File(self.output) as f:
+            self.assertEqual(len(f['tracks/data']), 2)
+            self.assertEqual(f['metadata'].attrs['min_length_cm'], 29)
+            length = float(f['tracks/data'][0]['length_cm'])
+        for cut in (31, 55):
+            output = self.root/f'cut{cut}.h5'
+            self.selector.run(str(self.source), str(output), False, min_length_cm=cut)
+            with h5py.File(output) as f:
+                self.assertEqual(len(f['tracks/data']), 0)
+        output = self.root/'strict.h5'
+        self.selector.run(str(self.source), str(output), False, min_length_cm=length)
+        with h5py.File(output) as f:
+            self.assertTrue(np.all(f['tracks/data']['length_cm'] > length))
+        for cut in (0, -1, float('nan')):
+            with self.assertRaises(ValueError):
+                self.selector.run(str(self.source), str(self.root/'invalid.h5'), False, cut)
+
     def fixture(self, noisy=False, optional=True):
         dtype = [('id','u8'), ('x','f8'), ('y','f8'), ('z','f8'), ('Q','f8'),
                  ('Q_raw','f8'), ('t_drift','u8'), ('ts_pps','u8'),

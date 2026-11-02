@@ -16,7 +16,7 @@ max_axis_dist = 3*pixel_pitch
 max_break_dist = 25*pixel_pitch
 d = 2 #Distance away from a TPC face
 v = 0.973 #Explained variance minimum
-b = 55 #cm
+DEFAULT_MIN_LENGTH_CM = 29.0
 
 # Initialize DBSCAN
 dbscan = DBSCAN(eps=max_break_dist, metric='euclidean', min_samples=1)
@@ -24,12 +24,14 @@ dbscan = DBSCAN(eps=max_break_dist, metric='euclidean', min_samples=1)
 # Initialize PCA
 pca = PCA(3)
 
-def run(input_file, output_file, is2x2):
+def run(input_file, output_file, is2x2, min_length_cm=DEFAULT_MIN_LENGTH_CM):
+    if not np.isfinite(min_length_cm) or min_length_cm <= 0:
+        raise ValueError('min_length_cm must be finite and positive')
     settings = dict(pixel_pitch_cm=pixel_pitch, min_size=min_size,
                     max_relative_spread=max_rel_spread, max_axis_distance_cm=max_axis_dist,
                     dbscan_eps_cm=max_break_dist, dbscan_min_samples=1,
                     boundary_margin_cm=d, min_quality_standardized=v,
-                    min_length_cm=b, is2x2=is2x2)
+                    min_length_cm=min_length_cm, is2x2=is2x2)
     f_manager = h5flow.data.H5FlowDataManager(input_file, 'r', mpi=False)
     try:
         with TrackOutputWriter(output_file, input_file, settings) as writer:
@@ -142,7 +144,7 @@ def run(input_file, output_file, is2x2):
                     l, start, end = length_track(points_c)
 
                     #if satisfies all criteria now, we output
-                    if np.logical_and(a > v, l > b):
+                    if np.logical_and(a > v, l > min_length_cm):
                         # Output-only physical fit: never used to change acceptance.
                         physical = PCA(3).fit(points_c)
                         physical_var = physical.explained_variance_
@@ -182,5 +184,7 @@ if __name__ == '__main__':
     parser.add_argument('input_file', type=str, help='input FLOW filename')
     parser.add_argument('output_file', type=str, help='new output HDF5 filename (must not exist)')
     parser.add_argument('is2x2', type=str2bool, help='2x2 (true) or FSD (false)')
+    parser.add_argument('--min-length-cm', type=float, default=DEFAULT_MIN_LENGTH_CM,
+                        help='Strict minimum track length in cm (default: 29; legacy: 55)')
     args = parser.parse_args()
-    run(args.input_file, args.output_file, args.is2x2)
+    run(args.input_file, args.output_file, args.is2x2, args.min_length_cm)
