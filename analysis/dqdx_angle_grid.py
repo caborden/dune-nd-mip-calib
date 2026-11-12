@@ -9,6 +9,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+from .compare_dqdx import fitted_widths
+from .dqdx import fit_counts
+
+
 ANGLE_EDGES = np.linspace(0, 90, 6)
 CHARGE_EDGES = np.linspace(0, 90, 101)  # PRC2 dQ/dx histogram settings
 
@@ -56,15 +60,29 @@ def histograms(path, kind, vertical):
     return counts, selected, valid
 
 
-def plot(counts, label, vertical, output):
+def fit_annotation(fit):
+    if fit is None:
+        return 'Fit unavailable'
+    widths = fitted_widths(dict(status='fit', params=fit['params']))
+    lines = [f"MPV {fit['params'][0]:.1f}"]
+    if widths['status'] == 'complete':
+        lines.extend([f"FWHM {widths['fwhm']:.1f}",
+                      f"FWHM/MPV {widths['fwhm_over_component_mpv']:.3f}"])
+    else:
+        lines.append('FWHM unavailable')
+    return '\n'.join(lines)
+
+
+def plot(counts, label, vertical, output, stats_threshold=200):
     fig, axes = plt.subplots(5, 5, sharex=True, sharey=True, figsize=(14, 11))
     fig.subplots_adjust(left=.14, right=.98, top=.86, bottom=.10, wspace=.08, hspace=.15)
     fig.suptitle(f'{label}   |   Segment dQ/dx by track direction', fontsize=18, y=.975)
     fig.text(.56, .92, 'Angle from y toward z in the pixel plane', ha='center', fontsize=13)
     row_title = 'Angle from x in the x–y projection' if vertical == 'xy' else '3D angle from the x drift axis'
     fig.text(.024, .48, row_title, rotation=90, ha='center', va='center', fontsize=13)
-    fig.text(.56, .042, 'Segment dQ/dx [ke⁻/cm]', ha='center', fontsize=13)
-    fig.text(.14, .012, 'Height = % of displayed segments in each panel per 0.9 ke⁻/cm bin.  N = displayed segments.', fontsize=10)
+    fig.text(.56, .052, 'Segment dQ/dx [ke⁻/cm]', ha='center', fontsize=13)
+    fig.text(.14, .028, 'Height = % of displayed segments per 0.9 ke⁻/cm bin.  N = displayed segments.', fontsize=9)
+    fig.text(.14, .010, f'N > {stats_threshold}: component MPV and full convolution FWHM [ke⁻/cm], red curve = fit over 20–50 ke⁻/cm.', fontsize=9)
     for i in range(5):
         angle_range = f'{int(ANGLE_EDGES[i])}–{int(ANGLE_EDGES[i+1])}°'
         axes[0, i].set_title(angle_range)
@@ -74,8 +92,15 @@ def plot(counts, label, vertical, output):
             hist = counts[i, j]
             n = hist.sum()
             if n:
-                ax.stairs(100 * hist / n, CHARGE_EDGES, color='#106c77', fill=True, alpha=.85)
-            ax.text(.97, .91, f'N = {n:,}', transform=ax.transAxes, ha='right', va='top', fontsize=9)
+                ax.stairs(100 * hist / n, CHARGE_EDGES, color='steelblue', fill=True, alpha=.85)
+            note = f'N = {n:,}'
+            if n > stats_threshold:
+                fit, _ = fit_counts(hist, CHARGE_EDGES, (20., 50.), min_fit_entries=100)
+                if fit is not None:
+                    ax.plot(fit['x_fit'], 100 * fit['fit_vals'] / n, color='red', lw=1.4)
+                note += '\n' + fit_annotation(fit)
+            ax.text(.98, .97, note, transform=ax.transAxes, ha='right', va='top', fontsize=8,
+                    bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=.85))
             ax.grid(axis='y', alpha=.18)
     axes[0, 0].set(xlim=(0, 90), ylim=(0, None), xticks=[0, 30, 60, 90])
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -90,12 +115,18 @@ def main():
     parser.add_argument('--vertical', choices=['xy', 'drift'], default='xy',
                         help='angle from x after projection onto x–y (xy), or full 3D angle from x (drift)')
     parser.add_argument('--label', help='display name for the selected sample')
-    parser.add_argument('--output', type=Path, required=True, help='figure filename, e.g. grid.png or grid.pdf')
+    parser.add_argument('--output', type=Path, required=True, help='figure filename, e.g. grid.pdf (defaults to .pdf if no extension)')
+    parser.add_argument('--stats-threshold', type=int, default=200,
+                        help='annotate fit statistics when displayed N exceeds this value')
     args = parser.parse_args()
+    if args.stats_threshold < 0:
+        parser.error('--stats-threshold must be nonnegative')
     counts, selected, valid = histograms(args.segments, args.sample, args.vertical)
     if not counts.sum():
         parser.error('No segments fall within the displayed angle and dQ/dx ranges')
-    plot(counts, args.label or args.sample, args.vertical, args.output)
+    if not args.output.suffix:
+        args.output = args.output.with_suffix('.pdf')
+    plot(counts, args.label or args.sample, args.vertical, args.output, args.stats_threshold)
     print(f'{args.output}: {counts.sum():,} shown of {selected:,} {args.sample} segments, '
           f'{selected-valid:,} undefined angles/nonfinite values, {valid-counts.sum():,} outside dQ/dx range')
 
