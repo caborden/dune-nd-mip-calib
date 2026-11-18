@@ -188,3 +188,5 @@ if __name__ == '__main__':
                         help='Strict minimum track length in cm (default: 29; legacy: 55)')
     args = parser.parse_args()
     run(args.input_file, args.output_file, args.is2x2, args.min_length_cm)
+    from sample_inventory import refresh_after_selection
+    refresh_after_selection(args.output_file)

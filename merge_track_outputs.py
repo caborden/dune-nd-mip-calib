@@ -207,3 +207,5 @@ if __name__ == '__main__':
     parser.add_argument('--chunk-rows', type=int, default=100000)
     args = parser.parse_args()
     merge_outputs(args.inputs, args.output, args.resume, args.chunk_rows)
+    from sample_inventory import refresh_after_selection
+    refresh_after_selection(args.output)

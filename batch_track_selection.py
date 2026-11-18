@@ -149,6 +149,9 @@ def run_batch(inputs, output_dir, is2x2=False, resume=False, merged_output=None,
         manifest['merge_status'] = 'complete'
     manifest['status'] = 'complete'
     write_manifest(manifest_path, manifest)
+    if merged_output:
+        from sample_inventory import refresh_after_selection
+        refresh_after_selection(merged_output)
     return outputs
 
 
