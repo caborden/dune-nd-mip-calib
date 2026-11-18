@@ -37,3 +37,28 @@ The provenance in the segment table identifies its original track inputs. Check
 those identities when reusing a table, especially for similarly named campaigns.
 The 450–500 microsecond bin is diagnostic and need not represent physical drift
 inside the nominal detector volume.
+
+## Data-only fitted mosaic
+
+Use `--data-only-fit` instead of `--mc-segments` to select only the data from a
+paired (or data-only) segment table:
+
+```bash
+python -m analysis.dqdx_drift_mosaic \
+  --data-segments /path/to/prc8/segments.hdf5 --data-only-fit \
+  --label 'PRC8 data' --output-dir /path/to/new/data-fit-mosaic \
+  --write-png --write-csv
+```
+
+This mode fits the raw data counts with the existing Moyal–Gaussian model over
+20–50 ke−/cm (`--fit-range`), requiring at least 100 entries in that range
+(`--min-fit-entries`) and five populated fit bins. The curve is scaled by the
+same normalization as the histogram for display. Every panel's legend reports
+the component MPV, full fitted convolution FWHM, and FWHM/component-MPV ratio.
+MPV and FWHM have units ke−/cm; their ratio is dimensionless. The component MPV
+is not the convolved curve's maximum. Widths are measured on the full fitted
+curve, not truncated at the fit-range boundaries. Failed/low-statistics fits or
+unavailable widths are explicitly labeled. Fit parameters, covariance, chi-square,
+and width diagnostics are saved per drift bin in `analysis.json`. Covariance
+errors do not account for segment correlations. Data-only CSVs contain no MC
+column; the paired overlay mode remains available.

@@ -6,7 +6,8 @@ import unittest
 import h5py
 import numpy as np
 
-from analysis.dqdx_drift_mosaic import histograms, run
+from analysis.dqdx_drift_mosaic import histograms, run, fit_panel, fit_label, DQDX_EDGES
+from scipy.stats import moyal
 from analysis.segments import SEGMENT_DTYPE
 
 
@@ -62,6 +63,30 @@ class MosaicTests(unittest.TestCase):
             self.assertTrue((out / filename).is_file())
         with self.assertRaises(FileExistsError):
             run(self.path, self.path, out)
+
+    def test_data_only_does_not_require_mc_and_records_unavailable_fits(self):
+        with h5py.File(self.path, 'a') as f:
+            del f['samples/1']
+        result = run(self.path, None, self.root / 'data_only', data_only_fit=True, write_csv=True)
+        self.assertEqual(set(result['inputs']), {'data'})
+        self.assertEqual(set(result['counts']), {'data'})
+        self.assertEqual(len(result['fits']), 10)
+        self.assertTrue(all(fit['status'] == 'no_fit' for fit in result['fits']))
+        self.assertNotIn('mc_count', (self.root / 'data_only/histograms.csv').read_text())
+
+    def test_moyal_gaussian_fit_recovers_mpv_and_full_width(self):
+        rng = np.random.default_rng(8)
+        q = moyal.rvs(loc=34, scale=3, size=60000, random_state=rng) + rng.normal(0, 2, 60000)
+        counts, _ = np.histogram(q, bins=DQDX_EDGES)
+        fit, summary = fit_panel(counts)
+        self.assertIsNotNone(fit)
+        self.assertAlmostEqual(summary['mpv'], 34, delta=1)
+        widths = summary['widths']
+        self.assertEqual(widths['status'], 'complete')
+        self.assertGreater(widths['fwhm'], 0)
+        self.assertAlmostEqual(widths['fwhm_over_component_mpv'], widths['fwhm'] / summary['mpv'])
+        self.assertIn('Component MPV', fit_label(summary))
+        self.assertIn('FWHM/MPV', fit_label(summary))
 
 
 if __name__ == '__main__':
