@@ -1,4 +1,4 @@
-"""Overlay data dQ/dx histograms and saved fits from completed analysis modules.
+"""Overlay data or MC dQ/dx histograms and saved fits from completed analysis modules.
 
 This lightweight comparison reads JSON products (or historical CSV/JSON products), not selection or segment
 HDF5 files. Each input is a dqdx/ directory, labeled independently of data/MC kind.
@@ -69,10 +69,12 @@ def product_identity(path):
     return dict(file_identity(path), sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest())
 
 
-def load_member(label, directory):
+def load_member(label, directory, sample_kind='data'):
+    if sample_kind not in {'data', 'mc'}:
+        raise ValueError('sample_kind must be data or mc')
     directory = Path(directory).resolve()
     report_path = directory/'analysis.json'
-    histogram_path = directory/'data_dqdx_histogram.csv'
+    histogram_path = directory/f'{sample_kind}_dqdx_histogram.csv'
     identities = [product_identity(report_path)]
     report = read_json(report_path)
     if report.get('status') != 'complete':
@@ -86,10 +88,10 @@ def load_member(label, directory):
             if stage is not None and stage.get('status') != 'complete':
                 raise ValueError(f'{label}: parent run marks {name} as {stage.get("status")}')
         identities.append(product_identity(parent_path))
-    fits = [fit for fit in report['fits'] if fit.get('sample_kind') == 'data']
-    samples = [sample for sample in report['samples'] if sample.get('sample_kind') == 'data']
+    fits = [fit for fit in report['fits'] if fit.get('sample_kind') == sample_kind]
+    samples = [sample for sample in report['samples'] if sample.get('sample_kind') == sample_kind]
     if len(fits) != 1 or len(samples) != 1:
-        raise ValueError(f'{label}: expected exactly one data sample and fit record')
+        raise ValueError(f'{label}: expected exactly one {sample_kind} sample and fit record')
     fit, sample, settings = fits[0], samples[0], report['settings']
     if 'histogram' in fit:
         histogram = fit['histogram']
@@ -184,16 +186,16 @@ def draw_overlay(members, output_dir, alpha, title='FSD Cube data: periodic-rese
         plt.close(fig)
 
 
-def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=.5, write_csv=False, write_png=False):
+def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=.5, write_csv=False, write_png=False, sample_kind='data'):
     root = Path(root).resolve()
     if not 0 < alpha < 1:
         raise ValueError('Fill alpha must be between zero and one')
     labels = [label for label, _ in member_paths]
     if len(labels) < 2 or len(set(labels)) != len(labels) or any(not label.strip() for label in labels):
         raise ValueError('Provide at least two members with unique nonempty labels')
-    members = [load_member(label, root/Path(path)) for label, path in member_paths]
+    members = [load_member(label, root/Path(path), sample_kind) for label, path in member_paths]
     if len({member['sample']['input'] for member in members}) != len(members):
-        raise ValueError('Members reference the same data selection; use distinct samples')
+        raise ValueError(f'Members reference the same {sample_kind} selection; use distinct samples')
     for member in members[1:]:
         if member['settings'] != members[0]['settings']:
             raise ValueError(f'{member["label"]}: segmentation/fit settings differ; regenerate matching source analyses')
@@ -205,7 +207,7 @@ def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=
     directory = comparison_dir/'analysis'/safe_name(run_id)
     registry_path = comparison_dir/'comparison.json'
     registry = dict(id=comparison_id, kind='dqdx-overlay',
-                    members=[dict(label=m['label'], sample_kind='data', selection_input=m['sample']['input'])
+                    members=[dict(label=m['label'], sample_kind=sample_kind, selection_input=m['sample']['input'])
                              for m in members])
     if registry_path.exists() and read_json(registry_path) != registry:
         raise ValueError(f'Comparison members changed: choose a new comparison ID: {registry_path}')
@@ -221,12 +223,12 @@ def compare(root, member_paths, run_id, comparison_id=DEFAULT_COMPARISON, alpha=
                     members=[{key: value for key, value in m.items()
                               if key not in {'edges', 'counts', 'fraction'}} for m in members])
     write_json(directory/'manifest.json', manifest)
-    write_json(directory/'config.json', dict(comparison_id=comparison_id, alpha=alpha,
+    write_json(directory/'config.json', dict(comparison_id=comparison_id, alpha=alpha, sample_kind=sample_kind,
                members=[dict(label=m['label'], dqdx_dir=m['directory']) for m in members]))
     output = directory/'dqdx_overlay'
     try:
         output.mkdir()
-        draw_overlay(members, output, alpha, write_png=write_png, write_csv=write_csv)
+        draw_overlay(members, output, alpha, title=f'FSD Cube {sample_kind}: periodic-reset dependence', write_png=write_png, write_csv=write_csv)
         for m in members:
             for identity in m['products']:
                 if product_identity(identity['path']) != identity:
@@ -247,6 +249,7 @@ def main():
                         help='repeat per sample; directory absolute or relative to --root')
     parser.add_argument('--comparison-id', default=DEFAULT_COMPARISON)
     parser.add_argument('--run-id', required=True, help='new overlay run ID; existing runs are refused')
+    parser.add_argument('--sample-kind', choices=['data', 'mc'], default='data')
     parser.add_argument('--alpha', type=float, default=.5)
     add_export_arguments(parser)
     args = parser.parse_args()
@@ -256,7 +259,7 @@ def main():
         if not separator or not path:
             parser.error('--member must have the form LABEL=DQDX_DIR')
         members.append((label, path))
-    directory = compare(args.root, members, args.run_id, args.comparison_id, args.alpha, write_csv=args.write_csv, write_png=args.write_png)
+    directory = compare(args.root, members, args.run_id, args.comparison_id, args.alpha, write_csv=args.write_csv, write_png=args.write_png, sample_kind=args.sample_kind)
     print(f'Complete: {directory}')
 
 

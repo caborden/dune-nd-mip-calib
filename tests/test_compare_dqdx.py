@@ -38,6 +38,24 @@ class DqdxOverlayTests(unittest.TestCase):
                        source_hashes=code_hashes()))
             self.members.append((label, directory))
 
+    def test_mc_overlay_selects_mc_histograms_fits_and_registry(self):
+        for label, directory in self.members:
+            data = load_member(label, directory)
+            report = read_json(directory/'analysis.json')
+            report['samples'][1]['input'] = f'/selection/{label}-mc.hdf5'
+            report['fits'][1] = dict(report['fits'][0], sample_kind='mc',
+                histogram=dict(edges=data['edges'].tolist(), counts=data['counts'].tolist()))
+            report['fits'][1]['params'] = [40., 2.8, 5.3, 12000.]
+            report['fits'][1]['mpv'] = 40.
+            write_json(directory/'analysis.json', report)
+        output = compare(self.root, self.members, 'mc', comparison_id='mc-prc', sample_kind='mc', write_png=True)
+        manifest = read_json(output/'manifest.json')
+        self.assertTrue(all(m['fit']['mpv'] == 40 for m in manifest['members']))
+        self.assertTrue(all(m['sample']['sample_kind'] == 'mc' for m in manifest['members']))
+        registry = read_json(output.parent.parent/'comparison.json')
+        self.assertTrue(all(m['sample_kind'] == 'mc' for m in registry['members']))
+        self.assertTrue((output/'dqdx_overlay/dqdx_prc_overlay.png').is_file())
+
     def test_json_histogram_without_csv(self):
         for label, directory in self.members:
             before = load_member(label, directory)
